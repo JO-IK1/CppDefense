@@ -1,9 +1,8 @@
 #include <iostream>
 
-int main() {
-  std::cout << "CppDefense CLI\n";
-  std::cout << "Version: 0.1.0\n";
-  std::cout << "Usage: cpp-defense <project_path>\n";
+#include "cpp_defense/ui/cli_app.hpp"
 
-  return 0;
+int main(int argc, char* argv[]) {
+  cpp_defense::CliApp app(std::cin, std::cout, std::cerr);
+  return app.Run(argc, argv);
 }
