@@ -4,11 +4,9 @@ CppDefense is an educational C++ project for practicing lab defense tasks.
 
 The idea is to simulate a programming defense session: the application analyzes a C++ project, selects candidate functions, hides one of them, starts a timer, and asks the user to restore the missing implementation.
 
-The project is developed step by step: from a minimal console version to a more complete portfolio-ready application.
-
 ## Current Status
 
-Version: `v0.2.0`
+Version: `v0.3.0`
 
 The application provides an interactive CLI for configuring and running a defense session.
 
