@@ -28,6 +28,7 @@ class CliApp {
   void PrintUsage(std::ostream& output) const;
   void PrintParseError(const CommandParseResult& result) const;
   void PrintStartMessage(const CliOptions& options) const;
+  int RunInteractiveLoop(CliOptions& options);
 
   CommandParser command_parser_;
   std::istream& input_;

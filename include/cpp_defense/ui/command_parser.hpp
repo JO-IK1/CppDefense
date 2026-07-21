@@ -19,6 +19,19 @@ enum class CommandParseStatus {
   kUnknownArgument,
 };
 
+enum class InteractiveCommandType {
+  kEmpty,
+  kHelp,
+  kExit,
+  kStart,
+  kCheck,
+  kSetPath,
+  kSetFunctionCount,
+  kSetTimer,
+  kFunctionsOnly,
+  kAll,
+};
+
 class CommandParseResult {
  public:
   static CommandParseResult Success(CliOptions options);
@@ -41,11 +54,29 @@ class CommandParseResult {
   std::string message_;
 };
 
+class InteractiveParseResult {
+ public:
+  static InteractiveParseResult Success(InteractiveCommandType type);
+  static InteractiveParseResult Error(std::string message);
+
+  bool ok() const noexcept { return ok_; }
+  InteractiveCommandType type() const noexcept { return type_; }
+  const std::string& message() const noexcept { return message_; }
+
+ private:
+  InteractiveParseResult(bool ok, InteractiveCommandType type, std::string message);
+
+  bool ok_ = false;
+  InteractiveCommandType type_ = InteractiveCommandType::kEmpty;
+  std::string message_;
+};
+
 class CommandParser {
  public:
   CommandParser() = default;
 
   CommandParseResult Parse(int argc, char* argv[]) const;
+  InteractiveParseResult ParseInteractive(std::string_view input, CliOptions& options) const;
 
   static std::string_view ProgramName() noexcept;
   static std::string UsageText();
