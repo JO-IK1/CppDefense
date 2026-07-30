@@ -98,7 +98,7 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
 
 void CliApp::PrintHeader() const {
   output_ << "CppDefense CLI\n";
-  output_ << "Version: 0.3.0\n";
+  output_ << "Version: 0.3.1\n";
 }
 
 void CliApp::PrintUsage(std::ostream& output) const {

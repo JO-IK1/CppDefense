@@ -6,7 +6,7 @@ The idea is to simulate a programming defense session: the application analyzes 
 
 ## Current Status
 
-Version: `v0.3.0`
+Version: `v0.3.1`
 
 The application provides an interactive CLI for configuring and running a defense session.
 
@@ -20,10 +20,20 @@ Currently implemented:
 - configurable timer duration;
 - selectable processing mode;
 - commands for starting and checking a defense session;
+- defense session status model;
+- typed cache and filesystem errors;
+- workspace model for source, cache, build, metadata, log, and result paths;
+- absolute and canonical project path resolution;
+- calculation of the runtime cache layout inside the CppDefense project;
 - separation between UI, application, core, and infrastructure layers.
 
 The `--start` and `--check` commands currently provide placeholder behavior.
-Full source-code modification and restoration checking are still under development.
+Cache directory creation, project copying, source-code modification, and
+restoration checking are still under development.
+
+The planned runtime workspace is located under `cache/current`. Path
+calculation does not create, remove, or copy files yet. The root `cache`
+directory is excluded from version control.
 
 ## Project Structure
 
@@ -129,7 +139,7 @@ Example:
 
 ```text
 CppDefense CLI
-Version: 0.3.0
+Version: 0.3.1
 Project path: not selected
 Function candidates: 5
 Timer: 5 minutes
@@ -150,6 +160,21 @@ A project directory must be selected before running -s or --start.
 The project path is optional at startup. After startup, the application waits for commands; use `-p <directory>` to select a project and `-e` or `--exit` to close it. The function count, timer, and mode can also be changed interactively.
 
 ## Recent Changes
+
+### Workspace path model and cache preparation foundation
+
+- Added the `Workspace` model for all defense session paths.
+- Added defense session status values.
+- Added typed cache and filesystem errors.
+- Added `WorkspaceCache` path calculation.
+- Added validation and canonicalization of the CppDefense and source project
+  directories.
+- Added calculation of project, build, metadata, log, and result paths under
+  `cache/current`.
+- Added dedicated errors for a missing CppDefense root and an invalid source
+  project name.
+- Excluded the runtime cache from version control.
+- Updated the project version to `v0.3.1`.
 
 ### Unified startup and interactive command parsing
 
