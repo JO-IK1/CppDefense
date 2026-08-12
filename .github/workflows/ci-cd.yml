@@ -1,0 +1,88 @@
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact-name: cpp-defense-linux
+            archive-name: cpp-defense-linux.tar.gz
+          - os: macos-latest
+            artifact-name: cpp-defense-macos
+            archive-name: cpp-defense-macos.tar.gz
+          - os: windows-latest
+            artifact-name: cpp-defense-windows
+            archive-name: cpp-defense-windows.zip
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Install release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cmake --install build --prefix package --config Release
+
+      - name: Package Unix release
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os != 'Windows'
+        run: cmake -E tar czf "${{ matrix.archive-name }}" --format=gnutar package
+
+      - name: Package Windows release
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
+        run: cmake -E tar cf "${{ matrix.archive-name }}" --format=zip package
+
+      - name: Upload release artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.archive-name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cpp-defense-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG"; then
+            gh release create "$RELEASE_TAG" --generate-notes --title "$RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" artifacts/* --clobber

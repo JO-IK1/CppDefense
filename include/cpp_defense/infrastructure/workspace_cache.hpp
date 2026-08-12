@@ -15,6 +15,9 @@ class WorkspaceCache {
   std::expected<Workspace, CacheError> CalculateWorkspace(
       const std::filesystem::path& source_project_path) const;
 
+  std::expected<Workspace, CacheError> PrepareWorkspace(
+      const std::filesystem::path& source_project_path) const;
+
  private:
   std::filesystem::path cpp_defense_root_path_;
 };

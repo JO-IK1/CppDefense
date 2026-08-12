@@ -1,8 +1,10 @@
 #include "cpp_defense/ui/cli_app.hpp"
 
+#include <filesystem>
 #include <iostream>
 #include <ostream>
 #include <string>
+#include <utility>
 
 namespace cpp_defense {
 namespace {
@@ -12,11 +14,19 @@ constexpr int kErrorExitCode = 1;
 
 }  // namespace
 
-CliApp::CliApp() : CliApp(std::cin, std::cout, std::cerr) {}
+CliApp::CliApp() : CliApp(std::cin, std::cout, std::cerr, ".") {}
 
 CliApp::CliApp(std::istream& input, std::ostream& output,
                std::ostream& error_output)
-    : input_(input), output_(output), error_output_(error_output) {}
+    : CliApp(input, output, error_output, ".") {}
+
+CliApp::CliApp(std::istream& input, std::ostream& output,
+               std::ostream& error_output,
+               std::filesystem::path cpp_defense_root_path)
+    : defense_service_(std::move(cpp_defense_root_path)),
+      input_(input),
+      output_(output),
+      error_output_(error_output) {}
 
 int CliApp::Run(int argc, char* argv[]) {
   PrintHeader();
@@ -88,6 +98,12 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
           break;
         }
         output_ << "Starting defense...\n";
+        if (const auto workspace = defense_service_.PrepareWorkspace(options.project_path());
+            workspace) {
+          output_ << "Workspace ready: " << workspace->cached_project_path << '\n';
+        } else {
+          error_output_ << "Error: " << workspace.error().FullMessage() << '\n';
+        }
         break;
       case InteractiveCommandType::kCheck:
         output_ << "Check function...\n";
@@ -98,7 +114,7 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
 
 void CliApp::PrintHeader() const {
   output_ << "CppDefense CLI\n";
-  output_ << "Version: 0.3.1\n";
+  output_ << "Version: " << CPP_DEFENSE_VERSION << '\n';
 }
 
 void CliApp::PrintUsage(std::ostream& output) const {

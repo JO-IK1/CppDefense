@@ -32,12 +32,9 @@ struct CacheError {
   std::error_code system_error;
 
   CacheError(CacheErrorType error_type, std::string error_message,
-             std::filesystem::path path,
-             std::error_code error_code = {})
-      : type(error_type),
-        message(std::move(error_message)),
-        problematic_path(std::move(path)),
-        system_error(error_code) {}
+             std::filesystem::path path, std::error_code error_code = {})
+      : type(error_type), message(std::move(error_message)),
+        problematic_path(std::move(path)), system_error(error_code) {}
 
   std::string FullMessage() const {
     std::string full = message;
@@ -91,21 +88,18 @@ inline CacheError SourceProjectEqualsCppDefense(
 inline CacheError SourceProjectInsideCache(
     const std::filesystem::path& path) {
   return CacheError(CacheErrorType::kSourceProjectInsideCache,
-                    "Source project is located inside the cache directory",
-                    path);
+                    "Source project is located inside the cache directory", path);
 }
 
 inline CacheError CacheInsideSourceProject(
     const std::filesystem::path& path) {
   return CacheError(CacheErrorType::kCacheInsideSourceProject,
-                    "Cache directory is located inside the source project",
-                    path);
+                    "Cache directory is located inside the source project", path);
 }
 
 inline CacheError DangerousCleanupPath(const std::filesystem::path& path) {
   return CacheError(CacheErrorType::kDangerousCleanupPath,
-                    "Cleanup path is outside the allowed cache location",
-                    path);
+                    "Cleanup path is outside the allowed cache location", path);
 }
 
 inline CacheError FailedToRemoveOldCache(

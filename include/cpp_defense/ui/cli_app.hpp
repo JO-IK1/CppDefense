@@ -1,7 +1,9 @@
 #pragma once
 
+#include <filesystem>
 #include <iosfwd>
 
+#include "cpp_defense/application/defense_service.hpp"
 #include "cpp_defense/core/cli_options.hpp"
 #include "cpp_defense/ui/command_parser.hpp"
 
@@ -10,8 +12,9 @@ namespace cpp_defense {
 class CliApp {
  public:
   CliApp();
-  CliApp(std::istream& input, std::ostream& output,
-         std::ostream& error_output);
+  CliApp(std::istream& input, std::ostream& output, std::ostream& error_output);
+  CliApp(std::istream& input, std::ostream& output, std::ostream& error_output,
+         std::filesystem::path cpp_defense_root_path);
 
   CliApp(const CliApp&) = delete;
   CliApp& operator=(const CliApp&) = delete;
@@ -31,6 +34,7 @@ class CliApp {
   int RunInteractiveLoop(CliOptions& options);
 
   CommandParser command_parser_;
+  DefenseService defense_service_;
   std::istream& input_;
   std::ostream& output_;
   std::ostream& error_output_;

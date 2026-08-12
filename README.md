@@ -6,7 +6,7 @@ The idea is to simulate a programming defense session: the application analyzes 
 
 ## Current Status
 
-Version: `v0.3.1`
+Version: `v0.4.0`
 
 The application provides an interactive CLI for configuring and running a defense session.
 
@@ -25,15 +25,21 @@ Currently implemented:
 - workspace model for source, cache, build, metadata, log, and result paths;
 - absolute and canonical project path resolution;
 - calculation of the runtime cache layout inside the CppDefense project;
+- validation of dangerous source/cache path relationships;
+- safe cleanup and creation of the runtime workspace;
+- recursive project copying with symbolic-link rejection;
+- workspace preparation through the interactive `--start` command;
+- automated workspace cache tests;
 - separation between UI, application, core, and infrastructure layers.
 
-The `--start` and `--check` commands currently provide placeholder behavior.
-Cache directory creation, project copying, source-code modification, and
+The `--start` command now prepares an isolated project copy. The `--check`
+command still provides placeholder behavior. Source-code modification and
 restoration checking are still under development.
 
-The planned runtime workspace is located under `cache/current`. Path
-calculation does not create, remove, or copy files yet. The root `cache`
-directory is excluded from version control.
+The runtime workspace is located under `cache/current`. Preparing a new
+session safely removes the previous `current` workspace, creates the required
+directories, and copies the selected project. The root `cache` directory is
+excluded from version control.
 
 ## Project Structure
 
@@ -77,6 +83,23 @@ Build the project:
 cmake -S . -B build
 cmake --build build
 ```
+
+Run the tests:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+CTest reports the six workspace cache scenarios separately, so a failed case
+can be identified by name.
+
+## CI/CD
+
+GitHub Actions builds and tests the project on Linux, macOS, and Windows for
+every push and pull request. Pushing a tag matching `v*` packages all three CLI
+binaries and publishes them in a GitHub Release after every platform succeeds.
+The packaged layout keeps the executable under `bin` and places its runtime
+cache in the extracted package root.
 
 Run the application:
 
@@ -139,7 +162,7 @@ Example:
 
 ```text
 CppDefense CLI
-Version: 0.3.1
+Version: 0.4.0
 Project path: not selected
 Function candidates: 5
 Timer: 5 minutes
@@ -160,6 +183,16 @@ A project directory must be selected before running -s or --start.
 The project path is optional at startup. After startup, the application waits for commands; use `-p <directory>` to select a project and `-e` or `--exit` to close it. The function count, timer, and mode can also be changed interactively.
 
 ## Recent Changes
+
+### Runtime workspace preparation
+
+- Added safe cache cleanup restricted to `cache/current`.
+- Added rejection of overlapping source and cache paths.
+- Added symbolic-link validation for the source tree and cleanup paths.
+- Added runtime directory creation and recursive source project copying.
+- Connected workspace preparation to the interactive `--start` command.
+- Added automated tests for successful preparation and destructive edge cases.
+- Replaced the duplicated CLI version string with the CMake project version.
 
 ### Workspace path model and cache preparation foundation
 
