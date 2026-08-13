@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(CppDefense VERSION 0.4.0 LANGUAGES CXX)
+project(CppDefense VERSION 0.4.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,15 +78,29 @@ add_executable(cpp-defense-tests
   tests/workspace_cache_test.cpp
 )
 
+add_executable(cpp-defense-project-scanner-tests
+  tests/project_scanner_test.cpp
+)
+
 target_link_libraries(cpp-defense-tests
+  PRIVATE
+    cpp-defense-lib
+)
+
+target_link_libraries(cpp-defense-project-scanner-tests
   PRIVATE
     cpp-defense-lib
 )
 
 if (MSVC)
   target_compile_options(cpp-defense-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-project-scanner-tests PRIVATE /W4)
 else()
   target_compile_options(cpp-defense-tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(cpp-defense-project-scanner-tests
+    PRIVATE
+      -Wall -Wextra -Wpedantic
+  )
 endif()
 
 set(WORKSPACE_CACHE_TEST_CASES
@@ -102,5 +116,23 @@ foreach(test_case IN LISTS WORKSPACE_CACHE_TEST_CASES)
   add_test(
     NAME workspace-cache.${test_case}
     COMMAND cpp-defense-tests ${test_case}
+  )
+endforeach()
+
+set(PROJECT_SCANNER_TEST_CASES
+  find-supported-files
+  skip-excluded-directories
+  skip-symbolic-links
+  empty-result
+  reject-missing-root
+  reject-file-root
+  reject-root-symlink
+  reject-dangling-root-symlink
+)
+
+foreach(test_case IN LISTS PROJECT_SCANNER_TEST_CASES)
+  add_test(
+    NAME project-scanner.${test_case}
+    COMMAND cpp-defense-project-scanner-tests ${test_case}
   )
 endforeach()

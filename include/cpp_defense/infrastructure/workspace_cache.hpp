@@ -3,7 +3,7 @@
 #include <expected>
 #include <filesystem>
 
-#include "cpp_defense/core/error.hpp"
+#include "cpp_defense/core/cache_error.hpp"
 #include "cpp_defense/core/workspace.hpp"
 
 namespace cpp_defense {

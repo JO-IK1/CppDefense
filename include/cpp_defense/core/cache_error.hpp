@@ -68,13 +68,13 @@ inline CacheError PathIsNotDirectory(const std::filesystem::path& path) {
 }
 
 inline CacheError CannotDetermineAbsolutePath(
-    const std::filesystem::path& path, const std::error_code& error_code = {}) {
+    const std::filesystem::path& path,
+    const std::error_code& error_code = {}) {
   return CacheError(CacheErrorType::kCannotDetermineAbsolutePath,
                     "Cannot determine absolute path", path, error_code);
 }
 
-inline CacheError CannotDetermineProjectName(
-    const std::filesystem::path& path) {
+inline CacheError CannotDetermineProjectName(const std::filesystem::path& path) {
   return CacheError(CacheErrorType::kCannotDetermineProjectName,
                     "Cannot determine source project directory name", path);
 }
@@ -85,14 +85,12 @@ inline CacheError SourceProjectEqualsCppDefense(
                     "Source project is CppDefense itself", path);
 }
 
-inline CacheError SourceProjectInsideCache(
-    const std::filesystem::path& path) {
+inline CacheError SourceProjectInsideCache(const std::filesystem::path& path) {
   return CacheError(CacheErrorType::kSourceProjectInsideCache,
                     "Source project is located inside the cache directory", path);
 }
 
-inline CacheError CacheInsideSourceProject(
-    const std::filesystem::path& path) {
+inline CacheError CacheInsideSourceProject(const std::filesystem::path& path) {
   return CacheError(CacheErrorType::kCacheInsideSourceProject,
                     "Cache directory is located inside the source project", path);
 }
@@ -102,20 +100,20 @@ inline CacheError DangerousCleanupPath(const std::filesystem::path& path) {
                     "Cleanup path is outside the allowed cache location", path);
 }
 
-inline CacheError FailedToRemoveOldCache(
-    const std::filesystem::path& path, const std::error_code& error_code) {
+inline CacheError FailedToRemoveOldCache(const std::filesystem::path& path,
+                                         const std::error_code& error_code) {
   return CacheError(CacheErrorType::kFailedToRemoveOldCache,
                     "Failed to remove old cache directory", path, error_code);
 }
 
-inline CacheError FailedToCreateDirectory(
-    const std::filesystem::path& path, const std::error_code& error_code) {
+inline CacheError FailedToCreateDirectory(const std::filesystem::path& path,
+                                          const std::error_code& error_code) {
   return CacheError(CacheErrorType::kFailedToCreateDirectory,
                     "Failed to create directory", path, error_code);
 }
 
-inline CacheError FailedToReadSourceFile(
-    const std::filesystem::path& path, const std::error_code& error_code) {
+inline CacheError FailedToReadSourceFile(const std::filesystem::path& path,
+                                         const std::error_code& error_code) {
   return CacheError(CacheErrorType::kFailedToReadSourceFile,
                     "Failed to read source file", path, error_code);
 }
@@ -132,8 +130,8 @@ inline CacheError SymlinkDetected(const std::filesystem::path& path) {
       "Symbolic link detected and is not allowed in cache operation", path);
 }
 
-inline CacheError OtherFilesystemError(
-    const std::filesystem::path& path, const std::error_code& error_code) {
+inline CacheError OtherFilesystemError(const std::filesystem::path& path,
+                                       const std::error_code& error_code) {
   return CacheError(CacheErrorType::kOtherFilesystemError,
                     "Other filesystem error occurred", path, error_code);
 }

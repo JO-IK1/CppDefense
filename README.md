@@ -6,7 +6,7 @@ The idea is to simulate a programming defense session: the application analyzes 
 
 ## Current Status
 
-Version: `v0.4.0`
+Version: `v0.4.1`
 
 The application provides an interactive CLI for configuring and running a defense session.
 
@@ -29,12 +29,18 @@ Currently implemented:
 - safe cleanup and creation of the runtime workspace;
 - recursive project copying with symbolic-link rejection;
 - workspace preparation through the interactive `--start` command;
-- automated workspace cache tests;
+- recursive source-file discovery with deterministic ordering;
+- filtering of unsupported files and generated or editor directories;
+- symbolic-link rejection for scan roots and symbolic-link skipping during
+  traversal;
+- automated workspace cache and project scanner tests;
 - separation between UI, application, core, and infrastructure layers.
 
-The `--start` command now prepares an isolated project copy. The `--check`
-command still provides placeholder behavior. Source-code modification and
-restoration checking are still under development.
+The `--start` command now prepares an isolated project copy. Project scanning
+is implemented as a separate infrastructure module and will be connected to
+the defense-session pipeline next. The `--check` command still provides
+placeholder behavior. Source-code modification and restoration checking are
+still under development.
 
 The runtime workspace is located under `cache/current`. Preparing a new
 session safely removes the previous `current` workspace, creates the required
@@ -90,8 +96,8 @@ Run the tests:
 ctest --test-dir build --output-on-failure
 ```
 
-CTest reports the six workspace cache scenarios separately, so a failed case
-can be identified by name.
+CTest reports the workspace cache and project scanner scenarios separately, so
+a failed case can be identified by name.
 
 ## CI/CD
 
@@ -162,7 +168,7 @@ Example:
 
 ```text
 CppDefense CLI
-Version: 0.4.0
+Version: 0.4.1
 Project path: not selected
 Function candidates: 5
 Timer: 5 minutes
@@ -183,6 +189,20 @@ A project directory must be selected before running -s or --start.
 The project path is optional at startup. After startup, the application waits for commands; use `-p <directory>` to select a project and `-e` or `--exit` to close it. The function count, timer, and mode can also be changed interactively.
 
 ## Recent Changes
+
+### Project source discovery
+
+- Added recursive discovery of C and C++ source and header files.
+- Added case-insensitive source-extension matching and deterministic result
+  ordering.
+- Added exclusion of build, cache, version-control, IDE, and editor
+  directories.
+- Added symbolic-link skipping during traversal and rejection of symbolic-link
+  scan roots, including dangling links.
+- Added typed project-scanning errors with filesystem context.
+- Split cache and scanner errors into module-specific headers.
+- Added automated tests for discovery, filtering, traversal, and invalid scan
+  roots.
 
 ### Runtime workspace preparation
 
