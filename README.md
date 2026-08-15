@@ -94,6 +94,7 @@ SourceFileRepository
 SimpleSourceParser
       ↓
 CodeEntityInfo[]
+```
 
 ## Architecture
 
