@@ -1,5 +1,8 @@
 #include "cpp_defense/ui/cli_app.hpp"
 
+#include "cpp_defense/infrastructure/simple_source_parser.hpp"
+#include "cpp_defense/infrastructure/source_file_repository.hpp"
+
 #include <filesystem>
 #include <iostream>
 #include <ostream>
@@ -91,20 +94,79 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
                                              : "all supported code")
                 << '\n';
         break;
-      case InteractiveCommandType::kStart:
+
+      case InteractiveCommandType::kStart: {
         if (options.project_path().empty()) {
           error_output_
               << "Select a project path first using -p <project_path>.\n";
           break;
         }
         output_ << "Starting defense...\n";
-        if (const auto workspace = defense_service_.PrepareWorkspace(options.project_path());
-            workspace) {
-          output_ << "Workspace ready: " << workspace->cached_project_path << '\n';
+
+        const auto project =
+            defense_service_.PrepareProject(options.project_path());
+
+        if (project) {
+          output_ << "Workspace ready: " << project->workspace.cached_project_path << '\n';
+
+          output_ << "Source files found: " << project->source_files.size() << '\n';
+          
+          // DEBUG ONLY: temporary output for Phase 2 verification.
+          for (const auto& file_path : project->source_files) {
+            output_ << "  - " << file_path << '\n';
+          }
+          // END DEBUG ONLY
+
+          // DEBUG ONLY: temporary output for Phase 3 verification.
+          SourceFileRepository repository;
+          SimpleSourceParser parser;
+
+          output_ << "Entities found:\n";
+
+          const auto EntityTypeName = [](CodeEntityType type) -> std::string_view {
+            switch (type) {
+              case CodeEntityType::kFunction:
+                return "function";
+              case CodeEntityType::kClass:
+                return "class";
+              case CodeEntityType::kStruct:
+                return "struct";
+            }
+            return "unknown";
+          };
+
+          std::size_t entity_count = 0;
+
+          for (const auto& file_path : project->source_files) {
+            const auto source = repository.ReadFile(file_path);
+            if (!source) {
+              error_output_ << source.error().FullMessage() << '\n';
+              continue;
+            }
+
+            const auto entities = parser.Parse(*source, file_path);
+
+            if (!entities) {
+              error_output_ << entities.error().FullMessage() << '\n';
+              continue;
+            }
+
+            for (const auto& entity : *entities) {
+              output_ << "  - [" << EntityTypeName(entity.type) << "] "
+                      << entity.name << " [lines " << entity.start_line
+                      << '-' << entity.end_line << "]\n";
+
+              ++entity_count;
+            }
+          }
+
+          output_ << "Total entities found: " << entity_count << '\n';
+          // END DEBUG ONLY
         } else {
-          error_output_ << "Error: " << workspace.error().FullMessage() << '\n';
+          error_output_ << "Error: " << project.error().FullMessage() << '\n';
         }
         break;
+      }
       case InteractiveCommandType::kCheck:
         output_ << "Check function...\n";
         break;

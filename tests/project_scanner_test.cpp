@@ -14,6 +14,7 @@ namespace {
 
 namespace fs = std::filesystem;
 using cpp_defense::ProjectScanner;
+using cpp_defense::ProjectScannerOptions;
 using cpp_defense::ScanErrorType;
 using cpp_defense::SourceFilePaths;
 
@@ -101,9 +102,17 @@ bool TestFindsSupportedFiles() {
 bool TestSkipsExcludedDirectories() {
   TemporaryDirectory temporary_directory;
   const fs::path root = temporary_directory.path() / "project";
-  constexpr std::array<std::string_view, 7> kExcludedDirectoryNames{
-      ".git",  ".idea",             ".vscode", "build",
-      "cache", "cmake-build-debug", "cmake-build-release"};
+  constexpr std::array<std::string_view, 9> kExcludedDirectoryNames{
+    ".git",
+    ".idea",
+    ".vscode",
+    "build",
+    "cache",
+    "cmake-build-debug",
+    "cmake-build-release",
+    "test",
+    "tests",
+};
 
   for (const std::string_view directory_name : kExcludedDirectoryNames) {
     WriteFile(root / directory_name / "ignored.cpp");
@@ -122,6 +131,126 @@ bool TestSkipsExcludedDirectories() {
 
   return ExpectPaths(*result, {included_file},
                      "excluded directory contents are not returned");
+}
+
+bool TestSkipsExcludedDirectoriesCaseInsensitive() {
+  TemporaryDirectory temporary_directory;
+  const fs::path root = temporary_directory.path() / "project";
+  constexpr std::array<std::string_view, 9> kExcludedDirectoryNames{
+    ".GIT",
+    ".Idea",
+    ".VsCoDe",
+    "BUILD",
+    "Cache",
+    "CMAKE-BUILD-DEBUG",
+    "Cmake-Build-Release",
+    "TEST",
+    "Tests",
+};
+
+  for (const std::string_view directory_name : kExcludedDirectoryNames) {
+    WriteFile(root / directory_name / "ignored.cpp");
+  }
+
+  const fs::path included_file = root / "src/included.cpp";
+  WriteFile(included_file);
+
+  const ProjectScanner scanner;
+  const auto result = scanner.FindSourceFiles(root);
+
+  if (!Expect(result.has_value(),
+              "excluded directory matching is case-insensitive")) {
+    std::cerr << result.error().FullMessage() << '\n';
+    return false;
+  }
+
+  return ExpectPaths(*result, {included_file},
+                     "excluded directories are skipped regardless of case");
+}
+
+bool TestSupportsCustomExcludedDirectories() {
+  TemporaryDirectory temporary_directory;
+  const fs::path root = temporary_directory.path() / "project";
+  const fs::path included_file = root / "src/included.cpp";
+
+  WriteFile(root / "generated/ignored.cpp");
+  WriteFile(root / "GENERATED/also-ignored.hpp");
+  WriteFile(included_file);
+
+  ProjectScannerOptions options;
+  options.excluded_directory_names.push_back("GeNeRaTeD");
+
+  const ProjectScanner scanner(options);
+  const auto result = scanner.FindSourceFiles(root);
+
+  if (!Expect(result.has_value(), "custom excluded directory is supported")) {
+    std::cerr << result.error().FullMessage() << '\n';
+    return false;
+  }
+
+  return ExpectPaths(*result, {included_file},
+                     "custom excluded directory is skipped regardless of case");
+}
+
+bool TestReturnsAbsoluteNormalizedPaths() {
+  TemporaryDirectory temporary_directory;
+  const fs::path root = temporary_directory.path() / "project";
+  const fs::path source_file = root / "src/main.cpp";
+  WriteFile(source_file);
+
+  const fs::path original_current_path = fs::current_path();
+
+  std::error_code error_code;
+  fs::current_path(temporary_directory.path(), error_code);
+
+  if (!Expect(!error_code, "test working directory can be changed")) {
+    return false;
+  }
+
+  const ProjectScanner scanner;
+  const auto result = scanner.FindSourceFiles(fs::path("project") / ".");
+
+  std::error_code restore_error_code;
+  fs::current_path(original_current_path, restore_error_code);
+
+  if (!Expect(!restore_error_code,
+              "test working directory can be restored")) {
+    return false;
+  }
+
+  if (!Expect(result.has_value(), "relative scan root is accepted")) {
+    std::cerr << result.error().FullMessage() << '\n';
+    return false;
+  }
+
+  if (!Expect(result->size() == 1,
+              "relative scan root produces one source file")) {
+    return false;
+  }
+
+  const fs::path& result_path = result->front();
+
+  if (!Expect(result_path.is_absolute(),
+              "returned source path is absolute")) {
+    return false;
+  }
+
+  if (!Expect(result_path == result_path.lexically_normal(),
+              "returned source path is lexically normalized")) {
+    return false;
+  }
+
+  std::error_code equivalent_error_code;
+  const bool equivalent =
+      fs::equivalent(result_path, source_file, equivalent_error_code);
+
+  if (!Expect(!equivalent_error_code,
+              "returned source path can be compared with expected file")) {
+    return false;
+  }
+
+  return Expect(equivalent,
+                "returned source path refers to the expected source file");
 }
 
 bool TestSkipsSymbolicLinks() {
@@ -246,9 +375,12 @@ struct TestCase {
   bool (*run)();
 };
 
-constexpr std::array<TestCase, 8> kTestCases = {{
+constexpr std::array<TestCase, 11> kTestCases = {{
     {"find-supported-files", TestFindsSupportedFiles},
     {"skip-excluded-directories", TestSkipsExcludedDirectories},
+    {"skip-excluded-directories-case-insensitive", TestSkipsExcludedDirectoriesCaseInsensitive},
+    {"custom-excluded-directories", TestSupportsCustomExcludedDirectories},
+    {"absolute-paths", TestReturnsAbsoluteNormalizedPaths},
     {"skip-symbolic-links", TestSkipsSymbolicLinks},
     {"empty-result", TestReturnsEmptyResult},
     {"reject-missing-root", TestRejectsMissingRoot},

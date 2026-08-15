@@ -1,130 +1,282 @@
 # CppDefense
 
-CppDefense is an educational C++ project for practicing lab defense tasks.
+CppDefense is a C++ training tool that simulates a programming lab defense.
 
-The idea is to simulate a programming defense session: the application analyzes a C++ project, selects candidate functions, hides one of them, starts a timer, and asks the user to restore the missing implementation.
+During a defense session, the application creates an isolated copy of a C++
+project, analyzes its source code, selects a code entity, hides its
+implementation, and asks the user to restore it within a limited amount of
+time.
+
+The project is inspired by university C++ lab defenses where a student has to
+restore a removed part of their own code and prove that the project still
+builds and works correctly.
 
 ## Current Status
 
-Version: `v0.4.1`
+Version: `v0.5.0`
 
-The application provides an interactive CLI for configuring and running a defense session.
+CppDefense is currently under active development.
 
-Currently implemented:
+The project can already:
 
-- startup command-line argument parsing;
-- startup without a project path;
-- interactive command parsing;
-- project directory selection and validation;
-- configurable candidate function count;
-- configurable timer duration;
-- selectable processing mode;
-- commands for starting and checking a defense session;
-- defense session status model;
-- typed cache and filesystem errors;
-- workspace model for source, cache, build, metadata, log, and result paths;
-- absolute and canonical project path resolution;
-- calculation of the runtime cache layout inside the CppDefense project;
-- validation of dangerous source/cache path relationships;
-- safe cleanup and creation of the runtime workspace;
-- recursive project copying with symbolic-link rejection;
-- workspace preparation through the interactive `--start` command;
-- recursive source-file discovery with deterministic ordering;
-- filtering of unsupported files and generated or editor directories;
-- symbolic-link rejection for scan roots and symbolic-link skipping during
-  traversal;
-- automated workspace cache and project scanner tests;
-- separation between UI, application, core, and infrastructure layers.
+- configure a defense session through an interactive CLI;
+- create an isolated workspace for a selected project;
+- safely validate and copy a source project;
+- recursively discover C and C++ source files;
+- exclude build, cache, test, IDE, and version-control directories;
+- reject unsafe symbolic-link configurations;
+- read source files without modifying their original byte representation;
+- lexically analyze C++ source code;
+- ignore comments, string literals, character literals, raw strings, and
+  preprocessor directives during structural analysis;
+- validate matching parentheses and braces;
+- discover supported source-code entities;
+- preserve exact source lines and byte offsets for discovered entities;
+- report filesystem, scanner, source-reading, and parser failures through
+  typed errors.
 
-The `--start` command now prepares an isolated project copy. Project scanning
-is implemented as a separate infrastructure module and will be connected to
-the defense-session pipeline next. The `--check` command still provides
-placeholder behavior. Source-code modification and restoration checking are
-still under development.
+Currently supported code entities are:
 
-The runtime workspace is located under `cache/current`. Preparing a new
-session safely removes the previous `current` workspace, creates the required
-directories, and copies the selected project. The root `cache` directory is
-excluded from version control.
+- functions;
+- classes;
+- structures.
+
+The candidate selection, source masking, build execution, timer integration,
+and final restoration check are the next development stages.
+
+## Example
+
+Given the following source:
+
+```cpp
+struct Config {
+  int width;
+  int height;
+};
+
+class Player {
+ public:
+  void Move() {
+  }
+};
+
+int Sum(int a, int b) {
+  return a + b;
+}
+```
+
+CppDefense can currently discover:
+
+```text
+[struct] Config
+[class] Player
+[function] Move
+[function] Sum
+```
+
+Each discovered entity stores its source file, line range, full entity range,
+and body range.
+
+This information will later be used to safely remove or mask an entity during
+a defense session.
+
+## Architecture
+
+CppDefense uses a layered architecture:
+
+```text
+core/
+application/
+infrastructure/
+ui/
+```
+
+### `core`
+
+Contains shared domain models and typed errors.
+
+Examples:
+
+```text
+CodeEntityInfo
+Workspace
+DefenseStatus
+CacheError
+ScanError
+ParseError
+SourceFileError
+```
+
+### `application`
+
+Coordinates application use cases.
+
+Current components include:
+
+```text
+DefenseService
+DefenseSession
+DefenseTimer
+FunctionPicker
+```
+
+### `infrastructure`
+
+Contains filesystem and external-process related implementations.
+
+Current components include:
+
+```text
+WorkspaceCache
+ProjectScanner
+SourceFileRepository
+SimpleSourceParser
+FileMasker
+BuildRunner
+```
+
+### `ui`
+
+Contains console interaction and command parsing.
+
+```text
+CliApp
+CommandParser
+```
+
+The CLI should not contain the core defense logic. Temporary Phase 2 and
+Phase 3 diagnostic output is currently present while the analysis pipeline is
+being developed.
 
 ## Project Structure
 
 ```text
 CppDefense/
-├── apps
-│   └── cli
+├── apps/
+│   └── cli/
 │       └── main.cpp
-├── include
-│   └── cpp_defense
+│
+├── include/
+│   └── cpp_defense/
 │       ├── application/
 │       ├── core/
 │       ├── infrastructure/
 │       └── ui/
-├── src
+│
+├── src/
 │   ├── application/
 │   ├── infrastructure/
 │   └── ui/
-├── tests
+│
+├── tests/
+│   ├── workspace_cache_test.cpp
+│   ├── project_scanner_test.cpp
+│   ├── source_file_repository_test.cpp
+│   └── simple_source_parser_test.cpp
+│
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+│
 ├── CMakeLists.txt
 └── README.md
 ```
 
-The project uses a layered structure:
-
-- `core/` — pure business logic;
-- `application/` — application use cases;
-- `infrastructure/` — filesystem, external tools, adapters;
-- `ui/` — console interface and user interaction.
-
-## Build
-
-Requirements:
+## Requirements
 
 - C++23 compiler;
 - CMake 3.20+.
 
-Build the project:
+The project currently uses C++23 primarily for `std::expected`.
+
+## Build
+
+Configure:
 
 ```bash
 cmake -S . -B build
+```
+
+Build:
+
+```bash
 cmake --build build
 ```
 
-Run the tests:
+Run all tests:
 
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-CTest reports the workspace cache and project scanner scenarios separately, so
-a failed case can be identified by name.
+At the current development stage, the test suite contains 46 individual
+CTest scenarios.
 
-## CI/CD
+## Testing
 
-GitHub Actions builds and tests the project on Linux, macOS, and Windows for
-every push and pull request. Pushing a tag matching `v*` packages all three CLI
-binaries and publishes them in a GitHub Release after every platform succeeds.
-The packaged layout keeps the executable under `bin` and places its runtime
-cache in the extracted package root.
+Tests currently cover:
 
-Run the application:
+### Workspace cache
+
+- fresh workspace creation;
+- replacement of an existing workspace;
+- source/cache path intersection;
+- symbolic-link rejection;
+- safe cleanup.
+
+### Project scanner
+
+- supported source extensions;
+- deterministic source discovery;
+- directory exclusion;
+- case-insensitive exclusions;
+- custom exclusions;
+- absolute normalized paths;
+- symbolic-link skipping;
+- invalid scan roots.
+
+### Source file repository
+
+- normal file reading;
+- empty files;
+- CRLF preservation;
+- missing files.
+
+### Source parser
+
+- simple functions;
+- classes;
+- structures;
+- inline methods;
+- inheritance;
+- nested classes;
+- mixed entity types;
+- qualified methods;
+- multiline signatures;
+- ignored namespaces;
+- ignored enum classes;
+- ignored forward declarations;
+- ignored control statements;
+- ignored lambdas;
+- comments and literals;
+- exact entity byte ranges;
+- exact body byte ranges;
+- CRLF offsets;
+- malformed comments and strings;
+- unmatched braces.
+
+## CLI
+
+CppDefense can be started without immediately selecting a project:
 
 ```bash
-./build/cpp-defense --help
+./build/cpp-defense
 ```
 
-Example:
+or with a project path:
 
 ```bash
-./build/cpp-defense ./some_project --functions 5 --timer 10
-```
-
-## CLI Usage
-
-The project directory is optional:
-
-```bash
-cpp-defense [project_path] [options]
+./build/cpp-defense ./lab_work
 ```
 
 Startup options:
@@ -132,111 +284,83 @@ Startup options:
 ```text
 -h, --help                 Show help and exit
 -p, --path <directory>     Select a project directory
--n, --functions <count>    Set candidate count from 1 to 50
--t, --timer <minutes>      Set timer duration from 1 to 180 minutes
-    --functions-only       Select functions only (default)
-    --all                  Allow all supported code fragments
+-n, --functions <count>    Set candidate count
+-t, --timer <minutes>      Set timer duration
+    --functions-only       Use functions only
+    --all                  Use all supported entities
 ```
 
-Example:
-
-```bash
-cpp-defense
-cpp-defense ./lab_work
-cpp-defense -p ./lab_work -n 10 -t 15 --functions-only
-```
-
-## Interactive Mode
-
-After startup, the application remains open and waits for commands. If no project directory was provided at startup, it can be selected interactively.
-
-Available commands:
+Interactive commands:
 
 ```text
--h, --help                 Show help
--p, --path <directory>     Select or change the project directory
--n, --functions <count>    Change candidate count from 1 to 50
--t, --timer <minutes>      Change timer duration from 1 to 180 minutes
-    --functions-only       Switch to functions-only mode
-    --all                  Allow all supported code fragments
--s, --start                Start the defense session
--c, --check                Check the restored function
--e, --exit                 Close the application
+-h, --help
+-p, --path <directory>
+-n, --functions <count>
+-t, --timer <minutes>
+    --functions-only
+    --all
+-s, --start
+-c, --check
+-e, --exit
 ```
 
-Example:
+The current `--start` implementation prepares the isolated workspace, scans
+the source project, and prints discovered source entities for development
+verification.
 
-```text
-CppDefense CLI
-Version: 0.4.1
-Project path: not selected
-Function candidates: 5
-Timer: 5 minutes
-Mode: functions only
+The complete defense-session workflow is not implemented yet.
 
-> -n 10
-Function candidates: 10
-> -t 15
-Timer: 15 minutes
-> -p ./lab_work
-Project path selected: "./lab_work"
-> -s
-Starting defense...
-> -e
-```
+## CI/CD
 
-A project directory must be selected before running -s or --start.
-The project path is optional at startup. After startup, the application waits for commands; use `-p <directory>` to select a project and `-e` or `--exit` to close it. The function count, timer, and mode can also be changed interactively.
+GitHub Actions builds and tests CppDefense on:
 
-## Recent Changes
+- Linux;
+- macOS;
+- Windows.
 
-### Project source discovery
+Every push and pull request runs the build and test pipeline.
 
-- Added recursive discovery of C and C++ source and header files.
-- Added case-insensitive source-extension matching and deterministic result
-  ordering.
-- Added exclusion of build, cache, version-control, IDE, and editor
-  directories.
-- Added symbolic-link skipping during traversal and rejection of symbolic-link
-  scan roots, including dangling links.
-- Added typed project-scanning errors with filesystem context.
-- Split cache and scanner errors into module-specific headers.
-- Added automated tests for discovery, filtering, traversal, and invalid scan
-  roots.
+Version tags matching `v*` can be packaged into platform-specific release
+artifacts.
 
-### Runtime workspace preparation
+## Roadmap
 
-- Added safe cache cleanup restricted to `cache/current`.
-- Added rejection of overlapping source and cache paths.
-- Added symbolic-link validation for the source tree and cleanup paths.
-- Added runtime directory creation and recursive source project copying.
-- Connected workspace preparation to the interactive `--start` command.
-- Added automated tests for successful preparation and destructive edge cases.
-- Replaced the duplicated CLI version string with the CMake project version.
+### Completed
 
-### Workspace path model and cache preparation foundation
+- [x] Interactive CLI foundation
+- [x] Typed error model
+- [x] Isolated workspace preparation
+- [x] Safe project copying
+- [x] Recursive C/C++ source discovery
+- [x] Exact source-file reading
+- [x] Lexical source sanitization
+- [x] Structural bracket analysis
+- [x] Function discovery
+- [x] Class discovery
+- [x] Structure discovery
+- [x] Exact source ranges for discovered entities
+- [x] Automated tests for the analysis pipeline
+- [x] Multi-platform CI
 
-- Added the `Workspace` model for all defense session paths.
-- Added defense session status values.
-- Added typed cache and filesystem errors.
-- Added `WorkspaceCache` path calculation.
-- Added validation and canonicalization of the CppDefense and source project
-  directories.
-- Added calculation of project, build, metadata, log, and result paths under
-  `cache/current`.
-- Added dedicated errors for a missing CppDefense root and an invalid source
-  project name.
-- Excluded the runtime cache from version control.
-- Updated the project version to `v0.3.1`.
+### Next
 
-### Unified startup and interactive command parsing
+- [ ] Move source-analysis orchestration from temporary CLI debug code into
+      the application layer
+- [ ] Filter entities according to `--functions-only` and `--all`
+- [ ] Rank/select defense candidates
+- [ ] Randomly choose a defense target
+- [ ] Mask the selected entity in the isolated workspace
+- [ ] Implement project build execution
+- [ ] Capture compiler output
+- [ ] Connect the defense timer
+- [ ] Implement `--check`
+- [ ] Restore or finish a defense session cleanly
 
-- Added startup without a required project path.
-- Added interactive parsing through `CommandParser`.
-- Added interactive configuration of the project path, function count,
-  timer, and processing mode.
-- Reused the same validation rules for startup and interactive commands.
-- Added structured interactive command results.
-- Simplified `CliApp` by moving parsing and validation into `CommandParser`.
-- Added `--start`, `--check`, `--help`, and `--exit` command handling.
-- Updated CLI usage output and project documentation.
+### Later
+
+- [ ] Detect project build systems
+- [ ] Improve C++ syntax coverage
+- [ ] Persist defense metadata
+- [ ] Add session statistics
+- [ ] Improve terminal UX
+- [ ] Prepare a polished portfolio release
