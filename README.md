@@ -80,6 +80,21 @@ and body range.
 This information will later be used to safely remove or mask an entity during
 a defense session.
 
+## Processing Pipeline
+
+```text
+Selected project
+      ↓
+WorkspaceCache
+      ↓
+ProjectScanner
+      ↓
+SourceFileRepository
+      ↓
+SimpleSourceParser
+      ↓
+CodeEntityInfo[]
+
 ## Architecture
 
 CppDefense uses a layered architecture:
@@ -117,7 +132,7 @@ Current components include:
 DefenseService
 DefenseSession
 DefenseTimer
-FunctionPicker
+CandidatePicker
 ```
 
 ### `infrastructure`
@@ -212,6 +227,104 @@ ctest --test-dir build --output-on-failure
 At the current development stage, the test suite contains 46 individual
 CTest scenarios.
 
+## Run
+Run the application:
+
+```bash
+./build/cpp-defense --help
+```
+
+Example:
+
+```bash
+./build/cpp-defense ./some_project --functions 5 --timer 10
+```
+
+## CLI Usage
+
+The project directory is optional:
+
+```bash
+cpp-defense [project_path] [options]
+```
+
+Startup options:
+
+```text
+-h, --help                 Show help and exit
+-p, --path <directory>     Select a project directory
+-n, --functions <count>    Set candidate count from 1 to 50
+-t, --timer <minutes>      Set timer duration from 1 to 180 minutes
+    --functions-only       Select functions only (default)
+    --all                  Allow all supported code fragments
+```
+
+Example:
+
+```bash
+cpp-defense
+cpp-defense ./lab_work
+cpp-defense -p ./lab_work -n 10 -t 15 --functions-only
+```
+
+## Interactive Mode
+
+After startup, the application remains open and waits for commands. If no project directory was provided at startup, it can be selected interactively.
+
+Available commands:
+
+```text
+-h, --help                 Show help
+-p, --path <directory>     Select or change the project directory
+-n, --functions <count>    Change candidate count from 1 to 50
+-t, --timer <minutes>      Change timer duration from 1 to 180 minutes
+    --functions-only       Switch to functions-only mode
+    --all                  Allow all supported code fragments
+-s, --start                Start the defense session
+-c, --check                Check the restored code entity
+-e, --exit                 Close the application
+```
+
+Example:
+
+```text
+CppDefense CLI
+Version: 0.5.0
+Project path: not selected
+Function candidates: 5
+Timer: 5 minutes
+Mode: functions only
+
+> -n 10
+Function candidates: 10
+> -t 15
+Timer: 15 minutes
+> -p ./lab_work
+Project path selected: "./lab_work"
+> -s
+Starting defense...
+> -e
+```
+
+The current `--start` implementation prepares the isolated workspace, scans
+the source project, and prints discovered source entities for development
+verification.
+
+The complete defense-session workflow is not implemented yet.
+
+## CI/CD
+
+GitHub Actions builds and tests CppDefense on:
+
+- Linux;
+- macOS;
+- Windows.
+
+Every push and pull request runs the build and test pipeline.
+
+Version tags matching `v*` can be packaged into platform-specific release
+artifacts.
+
 ## Testing
 
 Tests currently cover:
@@ -264,64 +377,6 @@ Tests currently cover:
 - CRLF offsets;
 - malformed comments and strings;
 - unmatched braces.
-
-## CLI
-
-CppDefense can be started without immediately selecting a project:
-
-```bash
-./build/cpp-defense
-```
-
-or with a project path:
-
-```bash
-./build/cpp-defense ./lab_work
-```
-
-Startup options:
-
-```text
--h, --help                 Show help and exit
--p, --path <directory>     Select a project directory
--n, --functions <count>    Set candidate count
--t, --timer <minutes>      Set timer duration
-    --functions-only       Use functions only
-    --all                  Use all supported entities
-```
-
-Interactive commands:
-
-```text
--h, --help
--p, --path <directory>
--n, --functions <count>
--t, --timer <minutes>
-    --functions-only
-    --all
--s, --start
--c, --check
--e, --exit
-```
-
-The current `--start` implementation prepares the isolated workspace, scans
-the source project, and prints discovered source entities for development
-verification.
-
-The complete defense-session workflow is not implemented yet.
-
-## CI/CD
-
-GitHub Actions builds and tests CppDefense on:
-
-- Linux;
-- macOS;
-- Windows.
-
-Every push and pull request runs the build and test pipeline.
-
-Version tags matching `v*` can be packaged into platform-specific release
-artifacts.
 
 ## Roadmap
 
