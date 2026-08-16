@@ -56,6 +56,7 @@ struct EntityCandidate {
   std::size_t opening_brace = 0;
   std::size_t closing_brace = 0;
   std::size_t end_offset = 0;
+  bool is_friend = false;
 };
 
 bool IsSpace(char character) {
@@ -530,21 +531,128 @@ bool IsValidQualifiedName(std::string_view name) {
   return true;
 }
 
-std::string_view ExtractFunctionName(std::string_view source,
-                                     std::size_t opening_parenthesis) {
+std::size_t SkipWhitespaceBackward(std::string_view source,
+                                   std::size_t offset) {
+  while (offset > 0 && IsSpace(source[offset - 1])) {
+    --offset;
+  }
+
+  return offset;
+}
+
+bool IsTokenAt(std::string_view source, std::size_t position,
+               std::string_view token) {
+  if (position + token.size() > source.size() ||
+      source.substr(position, token.size()) != token) {
+    return false;
+  }
+
+  const bool valid_left =
+      position == 0 || !IsIdentifierCharacter(source[position - 1]);
+  const std::size_t end = position + token.size();
+  const bool valid_right =
+      end == source.size() || !IsIdentifierCharacter(source[end]);
+
+  return valid_left && valid_right;
+}
+
+std::size_t FindLastToken(std::string_view source, std::size_t begin,
+                          std::size_t end, std::string_view token) {
+  if (begin >= end || token.empty()) {
+    return std::string_view::npos;
+  }
+
+  std::size_t position = source.rfind(token, end - 1);
+
+  while (position != std::string_view::npos && position >= begin) {
+    if (position + token.size() <= end &&
+        IsTokenAt(source, position, token)) {
+      return position;
+    }
+
+    if (position == 0) {
+      break;
+    }
+
+    position = source.rfind(token, position - 1);
+  }
+
+  return std::string_view::npos;
+}
+
+std::size_t FindQualifierStart(std::string_view source,
+                               std::size_t name_start,
+                               std::size_t boundary) {
+  std::size_t begin = SkipWhitespaceBackward(source, name_start);
+
+  while (begin >= boundary + 2 && source[begin - 1] == ':' &&
+         source[begin - 2] == ':') {
+    begin -= 2;
+    begin = SkipWhitespaceBackward(source, begin);
+
+    std::size_t identifier_begin = begin;
+
+    while (identifier_begin > boundary &&
+           IsIdentifierCharacter(source[identifier_begin - 1])) {
+      --identifier_begin;
+    }
+
+    if (identifier_begin == begin ||
+        !IsIdentifierStart(source[identifier_begin])) {
+      break;
+    }
+
+    begin = identifier_begin;
+    begin = SkipWhitespaceBackward(source, begin);
+  }
+
+  return begin;
+}
+
+std::string ExtractFunctionName(std::string_view source,
+                                std::size_t opening_parenthesis,
+                                std::size_t boundary) {
   if (opening_parenthesis == 0) {
     return {};
   }
 
-  std::size_t end = opening_parenthesis;
+  const std::size_t end =
+      SkipWhitespaceBackward(source, opening_parenthesis);
 
-  while (end > 0 && IsSpace(source[end - 1])) {
-    --end;
+  std::size_t direct_begin = end;
+  while (direct_begin > boundary &&
+         IsIdentifierCharacter(source[direct_begin - 1])) {
+    --direct_begin;
+  }
+
+  const std::string_view direct_identifier =
+      source.substr(direct_begin, end - direct_begin);
+
+  if (IsRejectedFunctionName(direct_identifier)) {
+    return std::string(direct_identifier);
+  }
+
+  const std::size_t operator_position =
+      FindLastToken(source, boundary, end, "operator");
+
+  if (operator_position != std::string_view::npos) {
+    const std::size_t begin =
+        FindQualifierStart(source, operator_position, boundary);
+    std::string_view name = source.substr(begin, end - begin);
+
+    while (!name.empty() && IsSpace(name.front())) {
+      name.remove_prefix(1);
+    }
+    while (!name.empty() && IsSpace(name.back())) {
+      name.remove_suffix(1);
+    }
+
+    return std::string(name);
   }
 
   std::size_t begin = end;
 
-  while (begin > 0) {
+  while (begin > boundary) {
     const char character = source[begin - 1];
 
     if (IsIdentifierCharacter(character) || character == ':' ||
@@ -556,7 +664,54 @@ std::string_view ExtractFunctionName(std::string_view source,
     break;
   }
 
-  return source.substr(begin, end - begin);
+  return std::string(source.substr(begin, end - begin));
+}
+
+std::string_view GetUnqualifiedFunctionName(std::string_view name) {
+  const std::size_t operator_position = name.find("operator");
+
+  if (operator_position != std::string_view::npos) {
+    return name.substr(operator_position);
+  }
+
+  const std::size_t separator = name.rfind("::");
+  return separator == std::string_view::npos ? name
+                                              : name.substr(separator + 2);
+}
+
+bool IsValidOperatorName(std::string_view name) {
+  const std::size_t operator_position = name.find("operator");
+
+  if (operator_position == std::string_view::npos) {
+    return false;
+  }
+
+  const std::string_view suffix = name.substr(operator_position + 8);
+
+  if (suffix.empty()) {
+    return false;
+  }
+
+  if (operator_position == 0) {
+    return true;
+  }
+
+  std::string_view qualifier = name.substr(0, operator_position);
+
+  while (!qualifier.empty() && IsSpace(qualifier.back())) {
+    qualifier.remove_suffix(1);
+  }
+
+  if (!qualifier.ends_with("::")) {
+    return false;
+  }
+
+  qualifier.remove_suffix(2);
+  return IsValidQualifiedName(qualifier);
+}
+
+bool IsValidFunctionName(std::string_view name) {
+  return IsValidQualifiedName(name) || IsValidOperatorName(name);
 }
 
 bool ContainsSingleColon(std::string_view value) {
@@ -641,6 +796,60 @@ std::size_t FindFunctionStart(std::string_view source,
   return SkipWhitespaceForward(source, start, opening_parenthesis);
 }
 
+std::string_view PreviousIdentifier(std::string_view source,
+                                    std::size_t offset,
+                                    std::size_t boundary) {
+  offset = SkipWhitespaceBackward(source, offset);
+  std::size_t end = offset;
+
+  while (offset > boundary &&
+         IsIdentifierCharacter(source[offset - 1])) {
+    --offset;
+  }
+
+  if (offset == end) {
+    return {};
+  }
+
+  return source.substr(offset, end - offset);
+}
+
+std::size_t FindConstructorInitializerColon(std::string_view source,
+                                            std::size_t boundary,
+                                            std::size_t opening_brace) {
+  for (std::size_t offset = boundary; offset < opening_brace; ++offset) {
+    if (source[offset] != ':') {
+      continue;
+    }
+
+    const bool previous_is_colon = offset > boundary &&
+                                   source[offset - 1] == ':';
+    const bool next_is_colon = offset + 1 < opening_brace &&
+                               source[offset + 1] == ':';
+
+    if (previous_is_colon || next_is_colon) {
+      continue;
+    }
+
+    const std::string_view previous =
+        PreviousIdentifier(source, offset, boundary);
+
+    if (previous == "public" || previous == "protected" ||
+        previous == "private") {
+      continue;
+    }
+
+    return offset;
+  }
+
+  return kNoOffset;
+}
+
+bool ContainsToken(std::string_view source, std::size_t begin,
+                   std::size_t end, std::string_view token) {
+  return FindLastToken(source, begin, end, token) != std::string_view::npos;
+}
+
 std::optional<EntityCandidate> TryFindFunctionCandidate(
     std::string_view source,
     const StructureInfo& structure,
@@ -650,7 +859,11 @@ std::optional<EntityCandidate> TryFindFunctionCandidate(
   }
 
   const std::size_t boundary = FindPreviousBoundary(source, opening_brace);
-  std::size_t search_position = opening_brace;
+  const std::size_t initializer_colon =
+      FindConstructorInitializerColon(source, boundary, opening_brace);
+  std::size_t search_position = initializer_colon == kNoOffset
+                                    ? opening_brace
+                                    : initializer_colon;
 
   while (search_position > boundary) {
     const std::size_t closing_parenthesis =
@@ -664,40 +877,41 @@ std::optional<EntityCandidate> TryFindFunctionCandidate(
     const std::size_t opening_parenthesis =
         structure.matching_parentheses[closing_parenthesis];
 
-    if (opening_parenthesis == kNoOffset) {
+    if (opening_parenthesis == kNoOffset ||
+        opening_parenthesis < boundary) {
       search_position = closing_parenthesis;
       continue;
     }
 
-    const std::string_view name =
-        ExtractFunctionName(source, opening_parenthesis);
+    const std::string name =
+        ExtractFunctionName(source, opening_parenthesis, boundary);
 
     if (name.empty()) {
-      search_position = closing_parenthesis;
+      search_position = opening_parenthesis;
       continue;
     }
 
-    const std::size_t last_separator = name.rfind("::");
-    std::string_view short_name =
-        last_separator == std::string_view::npos
-            ? name
-            : name.substr(last_separator + 2);
+    std::string_view short_name = GetUnqualifiedFunctionName(name);
 
     if (!short_name.empty() && short_name.front() == '~') {
       short_name.remove_prefix(1);
     }
 
-    if (!IsValidQualifiedName(name) || IsRejectedFunctionName(short_name)) {
-      search_position = closing_parenthesis;
+    if (!IsValidFunctionName(name) ||
+        IsRejectedFunctionName(short_name)) {
+      search_position = opening_parenthesis;
       continue;
     }
 
+    const std::size_t suffix_end = initializer_colon == kNoOffset
+                                       ? opening_brace
+                                       : initializer_colon;
     const std::string_view suffix = source.substr(
         closing_parenthesis + 1,
-        opening_brace - closing_parenthesis - 1);
+        suffix_end - closing_parenthesis - 1);
 
     if (!IsSupportedFunctionSuffix(suffix)) {
-      search_position = closing_parenthesis;
+      search_position = opening_parenthesis;
       continue;
     }
 
@@ -710,21 +924,30 @@ std::optional<EntityCandidate> TryFindFunctionCandidate(
 
     return EntityCandidate{
         .type = CodeEntityType::kFunction,
-        .name = std::string(name),
+        .name = name,
         .start_offset = FindFunctionStart(source, opening_parenthesis),
         .opening_brace = opening_brace,
         .closing_brace = closing_brace,
         .end_offset = closing_brace + 1,
+        .is_friend = ContainsToken(source, boundary, opening_parenthesis,
+                                   "friend"),
     };
   }
 
   return std::nullopt;
 }
 
-std::optional<std::pair<CodeEntityType, std::size_t>> FindLastTypeKeyword(
+struct TypeKeywordMatch {
+  CodeEntityType type;
+  std::size_t declaration_start = 0;
+  std::size_t name_search_start = 0;
+};
+
+std::optional<TypeKeywordMatch> FindLastTypeKeyword(
     std::string_view declaration) {
-  std::optional<std::pair<CodeEntityType, std::size_t>> result;
+  std::optional<TypeKeywordMatch> result;
   std::string_view previous_identifier;
+  std::size_t previous_token_start = kNoOffset;
 
   for (std::size_t offset = 0; offset < declaration.size();) {
     if (!IsIdentifierStart(declaration[offset])) {
@@ -743,13 +966,40 @@ std::optional<std::pair<CodeEntityType, std::size_t>> FindLastTypeKeyword(
     const std::string_view token =
         declaration.substr(token_start, offset - token_start);
 
-    if (token == "class" && previous_identifier != "enum") {
-      result = std::pair{CodeEntityType::kClass, token_start};
+    if (token == "class") {
+      if (previous_identifier == "enum" &&
+          previous_token_start != kNoOffset) {
+        result = TypeKeywordMatch{
+            .type = CodeEntityType::kEnumClass,
+            .declaration_start = previous_token_start,
+            .name_search_start = offset,
+        };
+      } else {
+        result = TypeKeywordMatch{
+            .type = CodeEntityType::kClass,
+            .declaration_start = token_start,
+            .name_search_start = offset,
+        };
+      }
     } else if (token == "struct") {
-      result = std::pair{CodeEntityType::kStruct, token_start};
+      if (previous_identifier == "enum" &&
+          previous_token_start != kNoOffset) {
+        result = TypeKeywordMatch{
+            .type = CodeEntityType::kEnumClass,
+            .declaration_start = previous_token_start,
+            .name_search_start = offset,
+        };
+      } else {
+        result = TypeKeywordMatch{
+            .type = CodeEntityType::kStruct,
+            .declaration_start = token_start,
+            .name_search_start = offset,
+        };
+      }
     }
 
     previous_identifier = token;
+    previous_token_start = token_start;
   }
 
   return result;
@@ -769,12 +1019,10 @@ std::optional<EntityCandidate> TryFindTypeCandidate(
     return std::nullopt;
   }
 
-  const auto [type, keyword_position] = *keyword;
-  const std::size_t keyword_size =
-      type == CodeEntityType::kClass ? std::string_view("class").size()
-                                     : std::string_view("struct").size();
+  const CodeEntityType type = keyword->type;
+  const std::size_t declaration_start = keyword->declaration_start;
 
-  std::size_t name_start = keyword_position + keyword_size;
+  std::size_t name_start = keyword->name_search_start;
   name_start = SkipWhitespaceForward(declaration, name_start,
                                      declaration.size());
 
@@ -827,7 +1075,7 @@ std::optional<EntityCandidate> TryFindTypeCandidate(
   return EntityCandidate{
       .type = type,
       .name = std::string(name),
-      .start_offset = boundary + keyword_position,
+      .start_offset = boundary + declaration_start,
       .opening_brace = opening_brace,
       .closing_brace = closing_brace,
       .end_offset = end_offset,
@@ -851,32 +1099,123 @@ CodeEntityInfo MakeEntityInfo(
   };
 }
 
-CodeEntities FindEntities(
-    std::string_view source,
-    const StructureInfo& structure,
-    const std::vector<std::size_t>& line_starts,
-    const std::filesystem::path& file_path) {
-  CodeEntities entities;
+bool HasExplicitFunctionQualifier(std::string_view name) {
+  const std::size_t operator_position = name.find("operator");
+
+  if (operator_position != std::string_view::npos) {
+    return name.substr(0, operator_position).find("::") !=
+           std::string_view::npos;
+  }
+
+  return name.find("::") != std::string_view::npos;
+}
+
+const EntityCandidate* FindContainingType(
+    const std::vector<EntityCandidate>& type_candidates,
+    const EntityCandidate& function_candidate) {
+  const EntityCandidate* result = nullptr;
+  std::size_t best_size = kNoOffset;
+
+  for (const EntityCandidate& type_candidate : type_candidates) {
+    if (function_candidate.opening_brace <= type_candidate.opening_brace ||
+        function_candidate.opening_brace >= type_candidate.closing_brace) {
+      continue;
+    }
+
+    const std::size_t type_size =
+        type_candidate.closing_brace - type_candidate.opening_brace;
+
+    if (type_size < best_size) {
+      best_size = type_size;
+      result = &type_candidate;
+    }
+  }
+
+  return result;
+}
+
+void QualifyMemberFunction(
+    EntityCandidate& function_candidate,
+    const std::vector<EntityCandidate>& type_candidates) {
+  if (function_candidate.is_friend ||
+      HasExplicitFunctionQualifier(function_candidate.name)) {
+    return;
+  }
+
+  const EntityCandidate* containing_type =
+      FindContainingType(type_candidates, function_candidate);
+
+  if (containing_type == nullptr) {
+    return;
+  }
+
+  function_candidate.name =
+      containing_type->name + "::" + function_candidate.name;
+}
+
+std::vector<EntityCandidate> FindTypeCandidates(
+    std::string_view source, const StructureInfo& structure) {
+  std::vector<EntityCandidate> candidates;
 
   for (std::size_t offset = 0; offset < source.size(); ++offset) {
     if (source[offset] != '{') {
       continue;
     }
 
-    if (const auto type_candidate =
-            TryFindTypeCandidate(source, structure, offset);
-        type_candidate) {
+    if (auto candidate = TryFindTypeCandidate(source, structure, offset)) {
+      candidates.push_back(std::move(*candidate));
+    }
+  }
+
+  return candidates;
+}
+
+const EntityCandidate* FindTypeCandidateAt(
+    const std::vector<EntityCandidate>& type_candidates,
+    std::size_t opening_brace) {
+  for (const EntityCandidate& candidate : type_candidates) {
+    if (candidate.opening_brace == opening_brace) {
+      return &candidate;
+    }
+  }
+
+  return nullptr;
+}
+
+CodeEntities FindEntities(
+    std::string_view source,
+    const StructureInfo& structure,
+    const std::vector<std::size_t>& line_starts,
+    const std::filesystem::path& file_path) {
+  CodeEntities entities;
+  const std::vector<EntityCandidate> type_candidates =
+      FindTypeCandidates(source, structure);
+
+  for (std::size_t offset = 0; offset < source.size(); ++offset) {
+    if (source[offset] != '{') {
+      continue;
+    }
+
+    if (const EntityCandidate* type_candidate =
+            FindTypeCandidateAt(type_candidates, offset);
+        type_candidate != nullptr) {
       entities.push_back(
           MakeEntityInfo(*type_candidate, line_starts, file_path));
       continue;
     }
 
-    if (const auto function_candidate =
-            TryFindFunctionCandidate(source, structure, offset);
-        function_candidate) {
-      entities.push_back(
-          MakeEntityInfo(*function_candidate, line_starts, file_path));
+    auto function_candidate =
+        TryFindFunctionCandidate(source, structure, offset);
+
+    if (!function_candidate) {
+      continue;
     }
+
+    QualifyMemberFunction(*function_candidate, type_candidates);
+    entities.push_back(
+        MakeEntityInfo(*function_candidate, line_starts, file_path));
+
+    offset = function_candidate->closing_brace;
   }
 
   return entities;

@@ -111,13 +111,11 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
 
           output_ << "Source files found: " << project->source_files.size() << '\n';
           
-          // DEBUG ONLY: temporary output for Phase 2 verification.
+          // DEBUG ONLY
           for (const auto& file_path : project->source_files) {
             output_ << "  - " << file_path << '\n';
           }
-          // END DEBUG ONLY
 
-          // DEBUG ONLY: temporary output for Phase 3 verification.
           SourceFileRepository repository;
           SimpleSourceParser parser;
 
@@ -131,6 +129,8 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
                 return "class";
               case CodeEntityType::kStruct:
                 return "struct";
+              case CodeEntityType::kEnumClass:
+                return "enum class";
             }
             return "unknown";
           };

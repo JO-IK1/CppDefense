@@ -10,6 +10,7 @@ enum class CodeEntityType {
   kFunction,
   kClass,
   kStruct,
+  kEnumClass,
 };
 
 struct CodeEntityInfo {

@@ -203,7 +203,9 @@ set(SOURCE_PARSER_TEST_CASES
   nested-classes
   multiple-entity-types
   namespace-ignored
-  enum-class-ignored
+  enum-class
+  enum-class-underlying-type
+  unscoped-enum-ignored
   forward-declarations-ignored
   qualified-method
   multiline-function
@@ -214,6 +216,11 @@ set(SOURCE_PARSER_TEST_CASES
   exact-function-range
   entity-lines
   crlf-offsets
+  constructor-initializer-list
+  operators
+  noexcept-operator
+  friend-operator-free
+  control-flow-inside-function
   unterminated-block-comment
   unterminated-string-literal
   unmatched-opening-brace

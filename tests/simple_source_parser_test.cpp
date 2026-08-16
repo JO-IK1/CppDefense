@@ -130,7 +130,7 @@ bool TestClassWithMethod() {
   return ExpectEntity(
              (*result)[0], CodeEntityType::kClass, "Player") &&
          ExpectEntity(
-             (*result)[1], CodeEntityType::kFunction, "Move");
+             (*result)[1], CodeEntityType::kFunction, "Player::Move");
 }
 
 bool TestStructWithMethod() {
@@ -153,7 +153,7 @@ bool TestStructWithMethod() {
   return ExpectEntity(
              (*result)[0], CodeEntityType::kStruct, "Counter") &&
          ExpectEntity(
-             (*result)[1], CodeEntityType::kFunction, "Get");
+             (*result)[1], CodeEntityType::kFunction, "Counter::Get");
 }
 
 bool TestClassWithInheritance() {
@@ -176,7 +176,7 @@ bool TestClassWithInheritance() {
   return ExpectEntity(
              (*result)[0], CodeEntityType::kClass, "Player") &&
          ExpectEntity(
-             (*result)[1], CodeEntityType::kFunction, "Update");
+             (*result)[1], CodeEntityType::kFunction, "Player::Update");
 }
 
 bool TestNestedClasses() {
@@ -232,7 +232,7 @@ bool TestMultipleEntityTypes() {
          ExpectEntity(
              (*result)[1], CodeEntityType::kClass, "Player") &&
          ExpectEntity(
-             (*result)[2], CodeEntityType::kFunction, "Move") &&
+             (*result)[2], CodeEntityType::kFunction, "Player::Move") &&
          ExpectEntity(
              (*result)[3], CodeEntityType::kFunction, "Sum");
 }
@@ -265,9 +265,52 @@ bool TestNamespaceIgnored() {
              (*result)[1], CodeEntityType::kFunction, "Run");
 }
 
-bool TestEnumClassIgnored() {
+bool TestEnumClass() {
   const std::string source =
       "enum class State {\n"
+      "  kIdle,\n"
+      "  kRunning,\n"
+      "};\n";
+
+  const std::string_view expected_entity =
+      "enum class State {\n"
+      "  kIdle,\n"
+      "  kRunning,\n"
+      "};";
+
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "state.hpp");
+
+  if (!Expect(result.has_value(), "enum class parses") ||
+      !Expect(result->size() == 1, "enum class is found")) {
+    return false;
+  }
+
+  return ExpectEntity(
+             result->front(), CodeEntityType::kEnumClass, "State") &&
+         Expect(GetEntitySource(source, result->front()) == expected_entity,
+                "enum class entity range is exact");
+}
+
+bool TestEnumClassWithUnderlyingType() {
+  const std::string source =
+      "enum class ResultType : unsigned char {\n"
+      "  kOk,\n"
+      "  kError,\n"
+      "};\n";
+
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "result.hpp");
+
+  return Expect(result.has_value(), "typed enum class parses") &&
+         Expect(result->size() == 1, "typed enum class is found") &&
+         ExpectEntity(result->front(), CodeEntityType::kEnumClass,
+                      "ResultType");
+}
+
+bool TestUnscopedEnumIgnored() {
+  const std::string source =
+      "enum State {\n"
       "  kIdle,\n"
       "  kRunning,\n"
       "};\n";
@@ -275,8 +318,8 @@ bool TestEnumClassIgnored() {
   const SimpleSourceParser parser;
   const auto result = parser.Parse(source, "state.hpp");
 
-  return Expect(result.has_value(), "enum class parses") &&
-         Expect(result->empty(), "enum class is not a class entity");
+  return Expect(result.has_value(), "unscoped enum parses") &&
+         Expect(result->empty(), "unscoped enum remains unsupported");
 }
 
 bool TestForwardDeclarationsIgnored() {
@@ -524,6 +567,120 @@ bool TestCrlfOffsets() {
       "CRLF byte offsets remain exact");
 }
 
+bool TestConstructorInitializerList() {
+  const std::string source =
+      "class Iterator {\n"
+      " public:\n"
+      "  Iterator() : buffer_(nullptr), position_(0) {}\n"
+      "};\n";
+
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "iterator.hpp");
+
+  if (!Expect(result.has_value(), "constructor parses") ||
+      !Expect(result->size() == 2,
+              "class and constructor are found")) {
+    return false;
+  }
+
+  return ExpectEntity(
+      (*result)[1], CodeEntityType::kFunction, "Iterator::Iterator");
+}
+
+bool TestOperators() {
+  const std::string source =
+      "class Iterator {\n"
+      " public:\n"
+      "  Iterator& operator++() { return *this; }\n"
+      "  Iterator operator++(int) { return *this; }\n"
+      "  int& operator[](int index) { return data_[index]; }\n"
+      "  bool operator==(const Iterator&) const { return true; }\n"
+      " private:\n"
+      "  int data_[1]{};\n"
+      "};\n";
+
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "iterator.hpp");
+
+  if (!Expect(result.has_value(), "operators parse") ||
+      !Expect(result->size() == 5,
+              "class and four operators are found")) {
+    return false;
+  }
+
+  return ExpectEntity((*result)[1], CodeEntityType::kFunction,
+                      "Iterator::operator++") &&
+         ExpectEntity((*result)[2], CodeEntityType::kFunction,
+                      "Iterator::operator++") &&
+         ExpectEntity((*result)[3], CodeEntityType::kFunction,
+                      "Iterator::operator[]") &&
+         ExpectEntity((*result)[4], CodeEntityType::kFunction,
+                      "Iterator::operator==");
+}
+
+bool TestNoexceptOperator() {
+  const std::string source =
+      "class Buffer {\n"
+      " public:\n"
+      "  Buffer& operator=(Buffer&& other) noexcept(\n"
+      "      noexcept(other.Reset())) {\n"
+      "    return *this;\n"
+      "  }\n"
+      "};\n";
+
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "buffer.hpp");
+
+  if (!Expect(result.has_value(), "noexcept operator parses") ||
+      !Expect(result->size() == 2,
+              "class and assignment operator are found")) {
+    return false;
+  }
+
+  return ExpectEntity((*result)[1], CodeEntityType::kFunction,
+                      "Buffer::operator=");
+}
+
+bool TestFriendOperatorRemainsFreeFunction() {
+  const std::string source =
+      "class Iterator {\n"
+      " public:\n"
+      "  friend Iterator operator+(int n, const Iterator& it) {\n"
+      "    return it;\n"
+      "  }\n"
+      "};\n";
+
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "iterator.hpp");
+
+  if (!Expect(result.has_value(), "friend operator parses") ||
+      !Expect(result->size() == 2,
+              "class and friend operator are found")) {
+    return false;
+  }
+
+  return ExpectEntity(
+      (*result)[1], CodeEntityType::kFunction, "operator+");
+}
+
+bool TestControlFlowInsideFunctionDoesNotBecomeFunction() {
+  const std::string source =
+      "void Run() {\n"
+      "  if constexpr (true) {\n"
+      "    Check();\n"
+      "  }\n"
+      "}\n";
+
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "example.cpp");
+
+  return Expect(result.has_value(), "if constexpr source parses") &&
+         Expect(result->size() == 1,
+                "only the enclosing function is found") &&
+         ExpectEntity(result->front(), CodeEntityType::kFunction, "Run");
+}
+
+
 bool TestUnterminatedBlockComment() {
   const std::string source =
       "class Player {\n"
@@ -601,7 +758,9 @@ constexpr TestCase kTestCases[] = {
     {"nested-classes", TestNestedClasses},
     {"multiple-entity-types", TestMultipleEntityTypes},
     {"namespace-ignored", TestNamespaceIgnored},
-    {"enum-class-ignored", TestEnumClassIgnored},
+    {"enum-class", TestEnumClass},
+    {"enum-class-underlying-type", TestEnumClassWithUnderlyingType},
+    {"unscoped-enum-ignored", TestUnscopedEnumIgnored},
     {"forward-declarations-ignored", TestForwardDeclarationsIgnored},
     {"qualified-method", TestQualifiedMethod},
     {"multiline-function", TestMultilineFunction},
@@ -612,6 +771,11 @@ constexpr TestCase kTestCases[] = {
     {"exact-function-range", TestExactFunctionRange},
     {"entity-lines", TestEntityLines},
     {"crlf-offsets", TestCrlfOffsets},
+    {"constructor-initializer-list", TestConstructorInitializerList},
+    {"operators", TestOperators},
+    {"noexcept-operator", TestNoexceptOperator},
+    {"friend-operator-free", TestFriendOperatorRemainsFreeFunction},
+    {"control-flow-inside-function", TestControlFlowInsideFunctionDoesNotBecomeFunction},
     {"unterminated-block-comment", TestUnterminatedBlockComment},
     {"unterminated-string-literal", TestUnterminatedStringLiteral},
     {"unmatched-opening-brace", TestUnmatchedOpeningBrace},
