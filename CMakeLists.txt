@@ -21,6 +21,11 @@ add_library(cpp-defense-lib
   src/infrastructure/project_scanner.cpp
   src/infrastructure/source_file_repository.cpp
   src/infrastructure/simple_source_parser.cpp
+  src/infrastructure/source_parser/source_lexer.cpp
+  src/infrastructure/source_parser/source_structure.cpp
+  src/infrastructure/source_parser/source_function_parser.cpp
+  src/infrastructure/source_parser/source_type_parser.cpp
+  src/infrastructure/source_parser/source_entity_finder.cpp
   src/infrastructure/file_masker.cpp
   src/infrastructure/build_runner.cpp
 
