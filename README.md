@@ -13,7 +13,7 @@ builds and works correctly.
 
 ## Current Status
 
-Version: `v0.5.0`
+Version: `v0.5.1`
 
 CppDefense is currently under active development.
 
@@ -32,17 +32,24 @@ The project can already:
 - validate matching parentheses and braces;
 - discover supported source-code entities;
 - preserve exact source lines and byte offsets for discovered entities;
-- report filesystem, scanner, source-reading, and parser failures through
-  typed errors.
+- filter defense candidates according to `--functions-only` and `--all`;
+- rank entities by body line count and keep only the requested top-N set;
+- store candidates in a fixed-capacity priority queue with indexed access;
+- choose a defense target randomly, with deterministic seeded selection for
+  tests;
+- report filesystem, scanner, source-reading, parser, and candidate-selection
+  failures through typed errors.
 
 Currently supported code entities are:
 
 - functions;
 - classes;
-- structures.
+- structures;
+- scoped enums declared with `enum class`.
 
-The candidate selection, source masking, build execution, timer integration,
-and final restoration check are the next development stages.
+Candidate selection is implemented as an application-layer component. Source
+masking, build execution, timer integration, and the final restoration check
+are the next development stages.
 
 ## Example
 
@@ -94,6 +101,12 @@ SourceFileRepository
 SimpleSourceParser
       ↓
 CodeEntityInfo[]
+      ↓
+CandidatePicker
+      ↓
+FixedPriorityQueue<CodeEntityInfo>
+      ↓
+Selected candidate
 ```
 
 ## Architecture
@@ -115,12 +128,14 @@ Examples:
 
 ```text
 CodeEntityInfo
+FixedPriorityQueue
 Workspace
 DefenseStatus
 CacheError
 ScanError
 ParseError
 SourceFileError
+PickerError
 ```
 
 ### `application`
@@ -188,7 +203,9 @@ CppDefense/
 │   ├── workspace_cache_test.cpp
 │   ├── project_scanner_test.cpp
 │   ├── source_file_repository_test.cpp
-│   └── simple_source_parser_test.cpp
+│   ├── simple_source_parser_test.cpp
+│   ├── fixed_priority_queue_test.cpp
+│   └── candidate_picker_test.cpp
 │
 ├── .github/
 │   └── workflows/
@@ -225,7 +242,7 @@ Run all tests:
 ctest --test-dir build --output-on-failure
 ```
 
-At the current development stage, the test suite contains 46 individual
+At the current development stage, the test suite contains 67 individual
 CTest scenarios.
 
 ## Run
@@ -290,7 +307,7 @@ Example:
 
 ```text
 CppDefense CLI
-Version: 0.5.0
+Version: 0.5.1
 Project path: not selected
 Function candidates: 5
 Timer: 5 minutes
@@ -368,7 +385,8 @@ Tests currently cover:
 - qualified methods;
 - multiline signatures;
 - ignored namespaces;
-- ignored enum classes;
+- scoped `enum class` declarations and underlying types;
+- ignored unscoped enums;
 - ignored forward declarations;
 - ignored control statements;
 - ignored lambdas;
@@ -378,6 +396,25 @@ Tests currently cover:
 - CRLF offsets;
 - malformed comments and strings;
 - unmatched braces.
+
+### Fixed priority queue
+
+- fixed-capacity top-N retention;
+- rejection of weaker values when full;
+- heap-top removal;
+- empty-queue behavior;
+- indexed access to retained values;
+- zero-capacity behavior.
+
+### Candidate picker
+
+- functions-only and all-entity filtering;
+- top-N selection by body line count;
+- fewer-than-requested candidate sets;
+- typed errors for empty results and invalid candidate counts;
+- deterministic selection with a fixed random seed;
+- direct indexed selection from the queue without converting to another
+  container.
 
 ## Roadmap
 
@@ -395,6 +432,11 @@ Tests currently cover:
 - [x] Class discovery
 - [x] Structure discovery
 - [x] Exact source ranges for discovered entities
+- [x] Candidate filtering for `--functions-only` and `--all`
+- [x] Fixed-capacity top-N candidate queue
+- [x] Candidate ranking by body line count
+- [x] Random defense-target selection
+- [x] Deterministic seeded candidate selection for tests
 - [x] Automated tests for the analysis pipeline
 - [x] Multi-platform CI
 
@@ -402,9 +444,7 @@ Tests currently cover:
 
 - [ ] Move source-analysis orchestration from temporary CLI debug code into
       the application layer
-- [ ] Filter entities according to `--functions-only` and `--all`
-- [ ] Rank/select defense candidates
-- [ ] Randomly choose a defense target
+- [ ] Connect `CandidatePicker` to the defense-session workflow
 - [ ] Mask the selected entity in the isolated workspace
 - [ ] Implement project build execution
 - [ ] Capture compiler output

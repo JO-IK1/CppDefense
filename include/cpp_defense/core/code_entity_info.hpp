@@ -21,18 +21,27 @@ struct CodeEntityInfo {
   std::size_t start_line = 0;
   std::size_t end_line = 0;
 
+  std::size_t body_start_line = 0;
+  std::size_t body_end_line = 0;
+
   std::size_t start_offset = 0;
   std::size_t end_offset = 0;
 
   std::size_t body_start_offset = 0;
   std::size_t body_end_offset = 0;
 
-  [[nodiscard]] std::size_t size() const noexcept {
+  std::size_t size() const noexcept {
     return end_offset - start_offset;
   }
 
-  [[nodiscard]] std::size_t body_size() const noexcept {
+  std::size_t body_size() const noexcept {
     return body_end_offset - body_start_offset;
+  }
+
+  std::size_t body_line_count() const noexcept {
+    if (body_end_line <= body_start_line + 1) { return 1; }
+    
+    return body_end_line - body_start_line - 1;
   }
 };
 

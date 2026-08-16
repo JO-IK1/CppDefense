@@ -153,8 +153,8 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
 
             for (const auto& entity : *entities) {
               output_ << "  - [" << EntityTypeName(entity.type) << "] "
-                      << entity.name << " [lines " << entity.start_line
-                      << '-' << entity.end_line << "]\n";
+                      << entity.name << " [lines " << entity.body_start_line
+                      << '-' << entity.body_end_line << "]\n";
 
               ++entity_count;
             }

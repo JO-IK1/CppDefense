@@ -14,7 +14,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_library(cpp-defense-lib
   src/application/defense_service.cpp
   src/application/defense_session.cpp
-  src/application/function_picker.cpp
+  src/application/candidate_picker.cpp
   src/application/defense_timer.cpp
 
   src/infrastructure/workspace_cache.cpp
@@ -95,6 +95,14 @@ add_executable(cpp-defense-source-parser-tests
   tests/simple_source_parser_test.cpp
 )
 
+add_executable(cpp-defense-fixed-priority-queue-tests
+  tests/fixed_priority_queue_test.cpp
+)
+
+add_executable(cpp-defense-candidate-picker-tests
+  tests/candidate_picker_test.cpp
+)
+
 target_link_libraries(cpp-defense-tests
   PRIVATE
     cpp-defense-lib
@@ -115,11 +123,23 @@ target_link_libraries(cpp-defense-source-parser-tests
     cpp-defense-lib
 )
 
+target_link_libraries(cpp-defense-fixed-priority-queue-tests
+  PRIVATE
+    cpp-defense-lib
+)
+
+target_link_libraries(cpp-defense-candidate-picker-tests
+  PRIVATE
+    cpp-defense-lib
+)
+
 if (MSVC)
   target_compile_options(cpp-defense-tests PRIVATE /W4)
   target_compile_options(cpp-defense-project-scanner-tests PRIVATE /W4)
   target_compile_options(cpp-defense-source-file-repository-tests PRIVATE /W4)
   target_compile_options(cpp-defense-source-parser-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-fixed-priority-queue-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-candidate-picker-tests PRIVATE /W4)
 else()
   target_compile_options(
     cpp-defense-tests
@@ -141,6 +161,18 @@ else()
 
   target_compile_options(
     cpp-defense-source-parser-tests
+    PRIVATE
+      -Wall -Wextra -Wpedantic
+  )
+
+  target_compile_options(
+    cpp-defense-fixed-priority-queue-tests
+    PRIVATE
+      -Wall -Wextra -Wpedantic
+  )
+
+  target_compile_options(
+    cpp-defense-candidate-picker-tests
     PRIVATE
       -Wall -Wextra -Wpedantic
   )
@@ -236,5 +268,40 @@ foreach(test_case IN LISTS SOURCE_PARSER_TEST_CASES)
   add_test(
     NAME source-parser.${test_case}
     COMMAND cpp-defense-source-parser-tests ${test_case}
+  )
+endforeach()
+
+
+set(FIXED_PRIORITY_QUEUE_TEST_CASES
+  keeps-largest-values
+  rejects-weaker-value
+  pop-removes-top
+  empty-operations
+  indexed-access
+  zero-capacity
+)
+
+foreach(test_case IN LISTS FIXED_PRIORITY_QUEUE_TEST_CASES)
+  add_test(
+    NAME fixed-priority-queue.${test_case}
+    COMMAND cpp-defense-fixed-priority-queue-tests ${test_case}
+  )
+endforeach()
+
+set(CANDIDATE_PICKER_TEST_CASES
+  functions-only
+  all-entities
+  keeps-largest
+  fewer-than-requested
+  no-suitable-candidates
+  invalid-candidate-count
+  fixed-seed
+  selected-from-queue
+)
+
+foreach(test_case IN LISTS CANDIDATE_PICKER_TEST_CASES)
+  add_test(
+    NAME candidate-picker.${test_case}
+    COMMAND cpp-defense-candidate-picker-tests ${test_case}
   )
 endforeach()

@@ -22,6 +22,8 @@ CodeEntityInfo MakeEntityInfo(
       .file_path = file_path,
       .start_line = LineFromOffset(line_starts, candidate.start_offset),
       .end_line = LineFromOffset(line_starts, candidate.closing_brace),
+      .body_start_line = LineFromOffset(line_starts, candidate.opening_brace),
+      .body_end_line = LineFromOffset(line_starts, candidate.closing_brace),
       .start_offset = candidate.start_offset,
       .end_offset = candidate.end_offset,
       .body_start_offset = candidate.opening_brace,
@@ -52,8 +54,7 @@ const EntityCandidate* FindContainingType(
       continue;
     }
 
-    const std::size_t type_size =
-        type_candidate.closing_brace - type_candidate.opening_brace;
+    const std::size_t type_size = type_candidate.closing_brace - type_candidate.opening_brace;
 
     if (type_size < best_size) {
       best_size = type_size;
@@ -72,8 +73,7 @@ void QualifyMemberFunction(
     return;
   }
 
-  const EntityCandidate* containing_type =
-      FindContainingType(type_candidates, function_candidate);
+  const EntityCandidate* containing_type = FindContainingType(type_candidates, function_candidate);
 
   if (containing_type == nullptr) {
     return;
@@ -112,7 +112,6 @@ const EntityCandidate* FindTypeCandidateAt(
   return nullptr;
 }
 
-
 }  // namespace
 
 std::vector<CodeEntityInfo> FindSourceEntities(
@@ -121,32 +120,27 @@ std::vector<CodeEntityInfo> FindSourceEntities(
     const std::vector<std::size_t>& line_starts,
     const std::filesystem::path& file_path) {
   std::vector<CodeEntityInfo> entities;
-  const std::vector<EntityCandidate> type_candidates =
-      FindTypeCandidates(source, structure);
+  const std::vector<EntityCandidate> type_candidates = FindTypeCandidates(source, structure);
 
   for (std::size_t offset = 0; offset < source.size(); ++offset) {
     if (source[offset] != '{') {
       continue;
     }
 
-    if (const EntityCandidate* type_candidate =
-            FindTypeCandidateAt(type_candidates, offset);
+    if (const EntityCandidate* type_candidate = FindTypeCandidateAt(type_candidates, offset);
         type_candidate != nullptr) {
-      entities.push_back(
-          MakeEntityInfo(*type_candidate, line_starts, file_path));
+      entities.push_back(MakeEntityInfo(*type_candidate, line_starts, file_path));
       continue;
     }
 
-    auto function_candidate =
-        TryFindFunctionCandidate(source, structure, offset);
+    auto function_candidate = TryFindFunctionCandidate(source, structure, offset);
 
     if (!function_candidate) {
       continue;
     }
 
     QualifyMemberFunction(*function_candidate, type_candidates);
-    entities.push_back(
-        MakeEntityInfo(*function_candidate, line_starts, file_path));
+    entities.push_back(MakeEntityInfo(*function_candidate, line_starts, file_path));
 
     offset = function_candidate->closing_brace;
   }
