@@ -67,9 +67,8 @@ inline CacheError PathIsNotDirectory(const std::filesystem::path& path) {
                     "Path is not a directory", path);
 }
 
-inline CacheError CannotDetermineAbsolutePath(
-    const std::filesystem::path& path,
-    const std::error_code& error_code = {}) {
+inline CacheError CannotDetermineAbsolutePath(const std::filesystem::path& path,
+                                              const std::error_code& error_code = {}) {
   return CacheError(CacheErrorType::kCannotDetermineAbsolutePath,
                     "Cannot determine absolute path", path, error_code);
 }
@@ -79,8 +78,7 @@ inline CacheError CannotDetermineProjectName(const std::filesystem::path& path) 
                     "Cannot determine source project directory name", path);
 }
 
-inline CacheError SourceProjectEqualsCppDefense(
-    const std::filesystem::path& path) {
+inline CacheError SourceProjectEqualsCppDefense(const std::filesystem::path& path) {
   return CacheError(CacheErrorType::kSourceProjectEqualsCppDefense,
                     "Source project is CppDefense itself", path);
 }

@@ -27,6 +27,7 @@ add_library(cpp-defense-lib
   src/infrastructure/source_parser/source_type_parser.cpp
   src/infrastructure/source_parser/source_entity_finder.cpp
   src/infrastructure/file_masker.cpp
+  src/infrastructure/result_file.cpp
   src/infrastructure/build_runner.cpp
 
   src/ui/cli_app.cpp
@@ -103,6 +104,14 @@ add_executable(cpp-defense-candidate-picker-tests
   tests/candidate_picker_test.cpp
 )
 
+add_executable(cpp-defense-file-masker-tests
+  tests/file_masker_test.cpp
+)
+
+add_executable(cpp-defense-result-file-tests
+  tests/result_file_test.cpp
+)
+
 target_link_libraries(cpp-defense-tests
   PRIVATE
     cpp-defense-lib
@@ -133,6 +142,16 @@ target_link_libraries(cpp-defense-candidate-picker-tests
     cpp-defense-lib
 )
 
+target_link_libraries(cpp-defense-file-masker-tests
+  PRIVATE
+    cpp-defense-lib
+)
+
+target_link_libraries(cpp-defense-result-file-tests
+  PRIVATE
+    cpp-defense-lib
+)
+
 if (MSVC)
   target_compile_options(cpp-defense-tests PRIVATE /W4)
   target_compile_options(cpp-defense-project-scanner-tests PRIVATE /W4)
@@ -140,6 +159,8 @@ if (MSVC)
   target_compile_options(cpp-defense-source-parser-tests PRIVATE /W4)
   target_compile_options(cpp-defense-fixed-priority-queue-tests PRIVATE /W4)
   target_compile_options(cpp-defense-candidate-picker-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-file-masker-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-result-file-tests PRIVATE /W4)
 else()
   target_compile_options(
     cpp-defense-tests
@@ -173,6 +194,18 @@ else()
 
   target_compile_options(
     cpp-defense-candidate-picker-tests
+    PRIVATE
+      -Wall -Wextra -Wpedantic
+  )
+
+  target_compile_options(
+    cpp-defense-file-masker-tests
+    PRIVATE
+      -Wall -Wextra -Wpedantic
+  )
+
+  target_compile_options(
+    cpp-defense-result-file-tests
     PRIVATE
       -Wall -Wextra -Wpedantic
   )
@@ -303,5 +336,36 @@ foreach(test_case IN LISTS CANDIDATE_PICKER_TEST_CASES)
   add_test(
     NAME candidate-picker.${test_case}
     COMMAND cpp-defense-candidate-picker-tests ${test_case}
+  )
+endforeach()
+
+
+set(FILE_MASKER_TEST_CASES
+  mask-function-body
+  preserve-crlf-offsets
+  mask-type-body
+  reject-invalid-range
+  reject-brace-mismatch
+)
+
+foreach(test_case IN LISTS FILE_MASKER_TEST_CASES)
+  add_test(
+    NAME file-masker.${test_case}
+    COMMAND cpp-defense-file-masker-tests ${test_case}
+  )
+endforeach()
+
+set(RESULT_FILE_TEST_CASES
+  function-signature
+  multiline-signature
+  type-semicolon
+  reject-invalid-range
+  read-missing-file
+)
+
+foreach(test_case IN LISTS RESULT_FILE_TEST_CASES)
+  add_test(
+    NAME result-file.${test_case}
+    COMMAND cpp-defense-result-file-tests ${test_case}
   )
 endforeach()

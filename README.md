@@ -37,8 +37,11 @@ The project can already:
 - store candidates in a fixed-capacity priority queue with indexed access;
 - choose a defense target randomly, with deterministic seeded selection for
   tests;
-- report filesystem, scanner, source-reading, parser, and candidate-selection
-  failures through typed errors.
+- mask the selected entity body in the cached project while preserving file
+  size, line endings, and parser offsets;
+- create `result.txt` with the selected entity signature and an empty body;
+- report filesystem, scanner, source-reading, parser, candidate-selection,
+  masking, and result-file failures through typed errors.
 
 Currently supported code entities are:
 
@@ -47,9 +50,9 @@ Currently supported code entities are:
 - structures;
 - scoped enums declared with `enum class`.
 
-Candidate selection is implemented as an application-layer component. Source
-masking, build execution, timer integration, and the final restoration check
-are the next development stages.
+Candidate selection, source masking, and result-file generation are
+implemented. Build execution, timer integration, and the final restoration
+check are the next development stages.
 
 ## Example
 
@@ -107,6 +110,10 @@ CandidatePicker
 FixedPriorityQueue<CodeEntityInfo>
       ↓
 Selected candidate
+      ↓
+FileMasker + ResultFile
+      ↓
+Masked cached project + result.txt
 ```
 
 ## Architecture
@@ -163,6 +170,7 @@ ProjectScanner
 SourceFileRepository
 SimpleSourceParser
 FileMasker
+ResultFile
 BuildRunner
 ```
 
@@ -205,7 +213,9 @@ CppDefense/
 │   ├── source_file_repository_test.cpp
 │   ├── simple_source_parser_test.cpp
 │   ├── fixed_priority_queue_test.cpp
-│   └── candidate_picker_test.cpp
+│   ├── candidate_picker_test.cpp
+│   ├── file_masker_test.cpp
+│   └── result_file_test.cpp
 │
 ├── .github/
 │   └── workflows/
@@ -242,7 +252,7 @@ Run all tests:
 ctest --test-dir build --output-on-failure
 ```
 
-At the current development stage, the test suite contains 67 individual
+At the current development stage, the test suite contains 77 individual
 CTest scenarios.
 
 ## Run
@@ -416,6 +426,21 @@ Tests currently cover:
 - direct indexed selection from the queue without converting to another
   container.
 
+### File masker
+
+- body masking without changing file size;
+- preservation of body braces, line endings, and subsequent offsets;
+- masking of functions and type bodies;
+- invalid-range and stale-brace detection.
+
+### Result file
+
+- function signatures with empty bodies;
+- multiline signature preservation;
+- trailing semicolon preservation for classes, structs, and `enum class`;
+- invalid source-range handling;
+- exact result-file reading for future `--check` integration.
+
 ## Roadmap
 
 ### Completed
@@ -437,6 +462,8 @@ Tests currently cover:
 - [x] Candidate ranking by body line count
 - [x] Random defense-target selection
 - [x] Deterministic seeded candidate selection for tests
+- [x] Mask selected entity bodies without invalidating offsets
+- [x] Generate `result.txt` with the selected entity signature
 - [x] Automated tests for the analysis pipeline
 - [x] Multi-platform CI
 
@@ -444,8 +471,9 @@ Tests currently cover:
 
 - [ ] Move source-analysis orchestration from temporary CLI debug code into
       the application layer
-- [ ] Connect `CandidatePicker` to the defense-session workflow
-- [ ] Mask the selected entity in the isolated workspace
+- [ ] Connect candidate selection, masking, and result-file creation to the
+      defense-session workflow
+- [ ] Implement result patching for `--check`
 - [ ] Implement project build execution
 - [ ] Capture compiler output
 - [ ] Connect the defense timer
