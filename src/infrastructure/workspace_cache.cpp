@@ -235,6 +235,7 @@ std::expected<Workspace, CacheError> WorkspaceCache::CalculateWorkspace(
   workspace.result_path = (workspace.session_root_path / "result.txt").lexically_normal();
   workspace.session_data_path = (workspace.metadata_path / "session.txt").lexically_normal();
   workspace.original_fragment_path = (workspace.metadata_path / "original_fragment.txt").lexically_normal();
+  workspace.defense_result_path = (workspace.session_root_path / "defense_result.txt").lexically_normal();
 
   return workspace;
 }

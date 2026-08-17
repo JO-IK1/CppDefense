@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(CppDefense VERSION 0.5.0 LANGUAGES CXX)
+project(CppDefense VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,9 @@ add_library(cpp-defense-lib
   src/infrastructure/source_parser/source_entity_finder.cpp
   src/infrastructure/file_masker.cpp
   src/infrastructure/result_file.cpp
+  src/infrastructure/file_patcher.cpp
+  src/infrastructure/check_workspace.cpp
+  src/infrastructure/defense_result_writer.cpp
   src/infrastructure/build_runner.cpp
 
   src/ui/cli_app.cpp
@@ -112,6 +115,22 @@ add_executable(cpp-defense-result-file-tests
   tests/result_file_test.cpp
 )
 
+add_executable(cpp-defense-file-patcher-tests
+  tests/file_patcher_test.cpp
+)
+
+add_executable(cpp-defense-timer-tests
+  tests/defense_timer_test.cpp
+)
+
+add_executable(cpp-defense-build-runner-tests
+  tests/build_runner_test.cpp
+)
+
+add_executable(cpp-defense-session-tests
+  tests/defense_session_test.cpp
+)
+
 target_link_libraries(cpp-defense-tests
   PRIVATE
     cpp-defense-lib
@@ -152,6 +171,11 @@ target_link_libraries(cpp-defense-result-file-tests
     cpp-defense-lib
 )
 
+target_link_libraries(cpp-defense-file-patcher-tests PRIVATE cpp-defense-lib)
+target_link_libraries(cpp-defense-timer-tests PRIVATE cpp-defense-lib)
+target_link_libraries(cpp-defense-build-runner-tests PRIVATE cpp-defense-lib)
+target_link_libraries(cpp-defense-session-tests PRIVATE cpp-defense-lib)
+
 if (MSVC)
   target_compile_options(cpp-defense-tests PRIVATE /W4)
   target_compile_options(cpp-defense-project-scanner-tests PRIVATE /W4)
@@ -161,6 +185,10 @@ if (MSVC)
   target_compile_options(cpp-defense-candidate-picker-tests PRIVATE /W4)
   target_compile_options(cpp-defense-file-masker-tests PRIVATE /W4)
   target_compile_options(cpp-defense-result-file-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-file-patcher-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-timer-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-build-runner-tests PRIVATE /W4)
+  target_compile_options(cpp-defense-session-tests PRIVATE /W4)
 else()
   target_compile_options(
     cpp-defense-tests
@@ -209,6 +237,11 @@ else()
     PRIVATE
       -Wall -Wextra -Wpedantic
   )
+
+  target_compile_options(cpp-defense-file-patcher-tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(cpp-defense-timer-tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(cpp-defense-build-runner-tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(cpp-defense-session-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 set(WORKSPACE_CACHE_TEST_CASES
@@ -368,4 +401,24 @@ foreach(test_case IN LISTS RESULT_FILE_TEST_CASES)
     NAME result-file.${test_case}
     COMMAND cpp-defense-result-file-tests ${test_case}
   )
+endforeach()
+
+set(FILE_PATCHER_TEST_CASES patch outside-project)
+foreach(test_case IN LISTS FILE_PATCHER_TEST_CASES)
+  add_test(NAME file-patcher.${test_case} COMMAND cpp-defense-file-patcher-tests ${test_case})
+endforeach()
+
+set(DEFENSE_TIMER_TEST_CASES expiration stop)
+foreach(test_case IN LISTS DEFENSE_TIMER_TEST_CASES)
+  add_test(NAME defense-timer.${test_case} COMMAND cpp-defense-timer-tests ${test_case})
+endforeach()
+
+set(BUILD_RUNNER_TEST_CASES success compile-failure test-failure unsupported)
+foreach(test_case IN LISTS BUILD_RUNNER_TEST_CASES)
+  add_test(NAME build-runner.${test_case} COMMAND cpp-defense-build-runner-tests ${test_case})
+endforeach()
+
+set(DEFENSE_SESSION_TEST_CASES start retry-success expired no-active-session)
+foreach(test_case IN LISTS DEFENSE_SESSION_TEST_CASES)
+  add_test(NAME defense-session.${test_case} COMMAND cpp-defense-session-tests ${test_case})
 endforeach()

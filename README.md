@@ -1,124 +1,213 @@
 # CppDefense
 
-CppDefense is a C++ training tool that simulates a programming lab defense.
+CppDefense is a C++23 console application for practicing university-style C++
+lab defenses. It copies a project into an isolated workspace, finds code
+entities, selects one of the largest candidates, hides its implementation and
+asks the user to restore it under a time limit.
 
-During a defense session, the application creates an isolated copy of a C++
-project, analyzes its source code, selects a code entity, hides its
-implementation, and asks the user to restore it within a limited amount of
-time.
+The original project is never modified.
 
-The project is inspired by university C++ lab defenses where a student has to
-restore a removed part of their own code and prove that the project still
-builds and works correctly.
+## Status
 
-## Current Status
+**Version: v1.0.0**
 
-Version: `v0.5.1`
+The console workflow is complete:
 
-CppDefense is currently under active development.
+```text
+source project
+    ↓
+isolated cache
+    ↓
+scan + parse
+    ↓
+top-N candidates
+    ↓
+random selected entity
+    ↓
+result.txt with signature
+    +
+masked cached project
+    ↓
+user edits result.txt
+    ↓
+check creates temporary project copy
+    ↓
+patch solution → CMake configure → build → CTest
+    ↓
+pass / compiler log / test log
+```
 
-The project can already:
+## Main features
 
-- configure a defense session through an interactive CLI;
-- create an isolated workspace for a selected project;
-- safely validate and copy a source project;
-- recursively discover C and C++ source files;
-- exclude build, cache, test, IDE, and version-control directories;
-- reject unsafe symbolic-link configurations;
-- read source files without modifying their original byte representation;
-- lexically analyze C++ source code;
-- ignore comments, string literals, character literals, raw strings, and
-  preprocessor directives during structural analysis;
-- validate matching parentheses and braces;
-- discover supported source-code entities;
-- preserve exact source lines and byte offsets for discovered entities;
-- filter defense candidates according to `--functions-only` and `--all`;
-- rank entities by body line count and keep only the requested top-N set;
-- store candidates in a fixed-capacity priority queue with indexed access;
-- choose a defense target randomly, with deterministic seeded selection for
-  tests;
-- mask the selected entity body in the cached project while preserving file
-  size, line endings, and parser offsets;
-- create `result.txt` with the selected entity signature and an empty body;
-- report filesystem, scanner, source-reading, parser, candidate-selection,
-  masking, and result-file failures through typed errors.
+- interactive CLI with configurable project path, candidate count and timer;
+- safe isolated workspace under `cache/current`;
+- recursive C/C++ source discovery;
+- lightweight C++ lexical and structural parser;
+- support for functions, classes, structs and `enum class`;
+- exact source/body byte offsets and line ranges;
+- top-N selection with a fixed-capacity min-heap;
+- random target selection with deterministic seeded mode for tests;
+- source masking that preserves file size, line endings and offsets;
+- `result.txt` generated from the original entity signature;
+- temporary check workspace so user code is never written to the masked cache;
+- CMake configure/build and CTest execution with captured logs;
+- retryable checks until success or timeout;
+- monotonic defense timer based on `std::chrono::steady_clock`;
+- final `defense_result.txt` with attempts, elapsed time, result and last log;
+- explicit typed errors throughout the pipeline;
+- multi-platform CI and 89 CTest scenarios.
 
-Currently supported code entities are:
+## Requirements
 
-- functions;
-- classes;
-- structures;
-- scoped enums declared with `enum class`.
+- C++23 compiler;
+- CMake 3.20+;
+- CTest (included with CMake).
 
-Candidate selection, source masking, and result-file generation are
-implemented. Build execution, timer integration, and the final restoration
-check are the next development stages.
+CppDefense currently checks **CMake projects**. Other build systems can be
+added behind `BuildRunner` later.
 
-## Example
+## Build
 
-Given the following source:
+```bash
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Run:
+
+```bash
+./build/cpp-defense
+```
+
+or start with a project already selected:
+
+```bash
+./build/cpp-defense ./examples/labwork_simple -n 5 -t 10
+```
+
+## Quick start
+
+```text
+CppDefense CLI
+Version: 1.0.0
+Project path: "./examples/labwork_simple"
+Function candidates: 5
+Timer: 10 minutes
+Mode: functions only
+
+> start
+Starting defense...
+Defense started.
+Source files found: ...
+Entities found: ...
+Candidates retained: 5
+Selected: [function] CalculateStatistics
+Cached project: .../cache/current/project/labwork_simple
+Edit this file: .../cache/current/result.txt
+Final report: .../cache/current/defense_result.txt
+Time remaining: 9:59
+```
+
+`result.txt` contains the selected signature and an empty body, for example:
 
 ```cpp
-struct Config {
-  int width;
-  int height;
-};
+ double CalculateStatistics(const std::vector<int>& values) {
 
-class Player {
- public:
-  void Move() {
-  }
-};
-
-int Sum(int a, int b) {
-  return a + b;
 }
 ```
 
-CppDefense can currently discover:
+Restore the entity in that text file, then run:
 
 ```text
-[struct] Config
-[class] Player
-[function] Move
-[function] Sum
+> check
+Checking solution...
+Attempt: 1
+Configure: OK
+Build: OK
+Tests: FAILED
+...
+Check failed. Fix result.txt and run --check again.
 ```
 
-Each discovered entity stores its source file, line range, full entity range,
-and body range.
-
-This information will later be used to safely remove or mask an entity during
-a defense session.
-
-## Processing Pipeline
+After correcting the answer:
 
 ```text
-Selected project
-      ↓
-WorkspaceCache
-      ↓
-ProjectScanner
-      ↓
-SourceFileRepository
-      ↓
-SimpleSourceParser
-      ↓
-CodeEntityInfo[]
-      ↓
-CandidatePicker
-      ↓
-FixedPriorityQueue<CodeEntityInfo>
-      ↓
-Selected candidate
-      ↓
-FileMasker + ResultFile
-      ↓
-Masked cached project + result.txt
+> check
+Checking solution...
+Attempt: 2
+Configure: OK
+Build: OK
+Tests: OK
+Defense passed.
+```
+
+## Interactive commands
+
+```text
+start, -s, --start         Start or restart a defense session
+check, build, -c, --check  Build and test result.txt
+info, i                    Show selected entity and paths
+time                       Show remaining time
+-p, --path <directory>     Select a project directory
+-n, --functions <count>    Change candidate count (1..50)
+-t, --timer <minutes>      Change timer (1..180)
+    --functions-only       Functions only (default)
+    --all                  Functions, classes, structs and enum class
+help, -h, --help           Show help
+quit, q, -e, --exit        Finish the session and exit
+```
+
+A failed build or failed tests do **not** end the session. The attempt counter
+is incremented and the user can edit `result.txt` and check again while time
+remains.
+
+## Runtime workspace
+
+For a project named `labwork_simple`:
+
+```text
+cache/current/
+├── project/
+│   └── labwork_simple/       # permanent masked copy for this session
+├── logs/
+│   ├── configure.log
+│   ├── build.log
+│   └── tests.log
+├── metadata/
+├── result.txt                # user edits this
+└── defense_result.txt        # final report
+```
+
+During `check`, an additional `cache/current/check/` directory is created and
+removed automatically.
+
+## Processing pipeline
+
+```text
+CliApp
+  ↓
+DefenseSession
+  ├─ DefenseService
+  │    ├─ WorkspaceCache
+  │    └─ ProjectScanner
+  ├─ SourceFileRepository
+  ├─ SimpleSourceParser
+  ├─ CandidatePicker
+  │    └─ FixedPriorityQueue
+  ├─ ResultFile
+  ├─ FileMasker
+  ├─ DefenseTimer
+  └─ Check
+       ├─ CheckWorkspace
+       ├─ FilePatcher
+       ├─ BuildRunner
+       └─ DefenseResultWriter
 ```
 
 ## Architecture
 
-CppDefense uses a layered architecture:
+The project follows four layers:
 
 ```text
 core/
@@ -129,7 +218,8 @@ ui/
 
 ### `core`
 
-Contains shared domain models and typed errors.
+Domain models and typed errors. It contains no console or filesystem
+orchestration.
 
 Examples:
 
@@ -138,18 +228,14 @@ CodeEntityInfo
 FixedPriorityQueue
 Workspace
 DefenseStatus
-CacheError
-ScanError
-ParseError
-SourceFileError
-PickerError
+DefenseResult
+BuildResult
+CacheError / ParseError / PickerError / ...
 ```
 
 ### `application`
 
-Coordinates application use cases.
-
-Current components include:
+Use cases and session state:
 
 ```text
 DefenseService
@@ -160,9 +246,7 @@ CandidatePicker
 
 ### `infrastructure`
 
-Contains filesystem and external-process related implementations.
-
-Current components include:
+Filesystem, parsing and process execution:
 
 ```text
 WorkspaceCache
@@ -171,80 +255,73 @@ SourceFileRepository
 SimpleSourceParser
 FileMasker
 ResultFile
+CheckWorkspace
+FilePatcher
 BuildRunner
+DefenseResultWriter
 ```
 
 ### `ui`
 
-Contains console interaction and command parsing.
+Console interaction only:
 
 ```text
 CliApp
 CommandParser
 ```
 
-The CLI should not contain the core defense logic. Temporary Phase 2 and
-Phase 3 diagnostic output is currently present while the analysis pipeline is
-being developed.
+`main.cpp` only creates and runs the CLI application.
 
-## Project Structure
+## Supported C++ entities
+
+The lightweight parser currently recognizes:
+
+- free functions;
+- member functions and qualified methods;
+- constructors/destructors;
+- operators and friend operators;
+- classes;
+- structs;
+- `enum class`.
+
+It masks comments, string/character/raw-string literals and preprocessor
+content before structural analysis, and validates matching braces and
+parentheses.
+
+This is intentionally not a full C++ compiler frontend. Highly macro-driven
+or exotic C++ syntax may be outside v1 parser coverage.
+
+## Candidate selection
+
+By default CppDefense keeps the five largest functions by body line count.
+The count can be changed with `-n`.
+
+Instead of sorting all `M` entities, `CandidatePicker` uses a fixed-capacity
+min-heap:
 
 ```text
-CppDefense/
-├── apps/
-│   └── cli/
-│       └── main.cpp
-│
-├── include/
-│   └── cpp_defense/
-│       ├── application/
-│       ├── core/
-│       ├── infrastructure/
-│       └── ui/
-│
-├── src/
-│   ├── application/
-│   ├── infrastructure/
-│   └── ui/
-│
-├── tests/
-│   ├── workspace_cache_test.cpp
-│   ├── project_scanner_test.cpp
-│   ├── source_file_repository_test.cpp
-│   ├── simple_source_parser_test.cpp
-│   ├── fixed_priority_queue_test.cpp
-│   ├── candidate_picker_test.cpp
-│   ├── file_masker_test.cpp
-│   └── result_file_test.cpp
-│
-├── .github/
-│   └── workflows/
-│       └── ci-cd.yml
-│
-├── CMakeLists.txt
-└── README.md
+Time:   O(M log N)
+Memory: O(N)
 ```
 
-## Requirements
+The smallest retained candidate stays at the heap root, so a stronger incoming
+candidate can replace it immediately.
 
-- C++23 compiler;
-- CMake 3.20+.
+## Testing
 
-The project currently uses C++23 primarily for `std::expected`.
+The v1 test suite contains **89 CTest scenarios** covering:
 
-## Build
-
-Configure:
-
-```bash
-cmake -S . -B build
-```
-
-Build:
-
-```bash
-cmake --build build
-```
+- workspace creation and safety checks;
+- recursive scanner behavior and symlink handling;
+- byte-exact source reading and CRLF preservation;
+- lexer/parser entities, offsets, operators and malformed input;
+- fixed-capacity priority queue behavior;
+- candidate filtering, top-N retention and deterministic RNG;
+- masking and result-file generation;
+- solution patching without modifying cached sources;
+- deterministic timer expiration;
+- real CMake configure/build/CTest success and failure paths;
+- end-to-end defense start, failed attempt, retry, success and timeout.
 
 Run all tests:
 
@@ -252,239 +329,44 @@ Run all tests:
 ctest --test-dir build --output-on-failure
 ```
 
-At the current development stage, the test suite contains 77 individual
-CTest scenarios.
+## Example project
 
-## Run
-Run the application:
-
-```bash
-./build/cpp-defense --help
-```
-
-Example:
+`examples/labwork_simple` is a small standalone CMake project with several
+functions of different sizes and CTest tests. It is intended for manual demos
+and smoke testing:
 
 ```bash
-./build/cpp-defense ./some_project --functions 5 --timer 10
+./build/cpp-defense ./examples/labwork_simple -n 5 -t 10
 ```
-
-## CLI Usage
-
-The project directory is optional:
-
-```bash
-cpp-defense [project_path] [options]
-```
-
-Startup options:
-
-```text
--h, --help                 Show help and exit
--p, --path <directory>     Select a project directory
--n, --functions <count>    Set candidate count from 1 to 50
--t, --timer <minutes>      Set timer duration from 1 to 180 minutes
-    --functions-only       Select functions only (default)
-    --all                  Allow all supported code fragments
-```
-
-Example:
-
-```bash
-cpp-defense
-cpp-defense ./lab_work
-cpp-defense -p ./lab_work -n 10 -t 15 --functions-only
-```
-
-## Interactive Mode
-
-After startup, the application remains open and waits for commands. If no project directory was provided at startup, it can be selected interactively.
-
-Available commands:
-
-```text
--h, --help                 Show help
--p, --path <directory>     Select or change the project directory
--n, --functions <count>    Change candidate count from 1 to 50
--t, --timer <minutes>      Change timer duration from 1 to 180 minutes
-    --functions-only       Switch to functions-only mode
-    --all                  Allow all supported code fragments
--s, --start                Start the defense session
--c, --check                Check the restored code entity
--e, --exit                 Close the application
-```
-
-Example:
-
-```text
-CppDefense CLI
-Version: 0.5.1
-Project path: not selected
-Function candidates: 5
-Timer: 5 minutes
-Mode: functions only
-
-> -n 10
-Function candidates: 10
-> -t 15
-Timer: 15 minutes
-> -p ./lab_work
-Project path selected: "./lab_work"
-> -s
-Starting defense...
-> -e
-```
-
-The current `--start` implementation prepares the isolated workspace, scans
-the source project, and prints discovered source entities for development
-verification.
-
-The complete defense-session workflow is not implemented yet.
 
 ## CI/CD
 
-GitHub Actions builds and tests CppDefense on:
+GitHub Actions builds and tests the project on Linux, macOS and Windows.
+Version tags matching `v*` are packaged as release artifacts.
 
-- Linux;
-- macOS;
-- Windows.
+## Limitations of v1
 
-Every push and pull request runs the build and test pipeline.
+- build execution currently targets CMake projects;
+- parsing is lightweight rather than Clang/AST-based;
+- the timer is enforced when the CLI processes the next command; no background
+  thread interrupts terminal input;
+- session state is process-local; restarting CppDefense starts a new session.
 
-Version tags matching `v*` can be packaged into platform-specific release
-artifacts.
+These constraints keep v1 dependency-free and focused on the educational C++
+architecture.
 
-## Testing
+## Documentation
 
-Tests currently cover:
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — formal architecture,
+  execution model, session lifecycle, source-masking strategy, validation flow,
+  and system invariants;
+- [`docs/LEARNING.md`](docs/LEARNING.md) — C++ topics practiced by each module;
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — completed v1 scope and possible next
+  versions.
 
-### Workspace cache
+## License
 
-- fresh workspace creation;
-- replacement of an existing workspace;
-- source/cache path intersection;
-- symbolic-link rejection;
-- safe cleanup.
+CppDefense is licensed under the [MIT License](LICENSE).
 
-### Project scanner
-
-- supported source extensions;
-- deterministic source discovery;
-- directory exclusion;
-- case-insensitive exclusions;
-- custom exclusions;
-- absolute normalized paths;
-- symbolic-link skipping;
-- invalid scan roots.
-
-### Source file repository
-
-- normal file reading;
-- empty files;
-- CRLF preservation;
-- missing files.
-
-### Source parser
-
-- simple functions;
-- classes;
-- structures;
-- inline methods;
-- inheritance;
-- nested classes;
-- mixed entity types;
-- qualified methods;
-- multiline signatures;
-- ignored namespaces;
-- scoped `enum class` declarations and underlying types;
-- ignored unscoped enums;
-- ignored forward declarations;
-- ignored control statements;
-- ignored lambdas;
-- comments and literals;
-- exact entity byte ranges;
-- exact body byte ranges;
-- CRLF offsets;
-- malformed comments and strings;
-- unmatched braces.
-
-### Fixed priority queue
-
-- fixed-capacity top-N retention;
-- rejection of weaker values when full;
-- heap-top removal;
-- empty-queue behavior;
-- indexed access to retained values;
-- zero-capacity behavior.
-
-### Candidate picker
-
-- functions-only and all-entity filtering;
-- top-N selection by body line count;
-- fewer-than-requested candidate sets;
-- typed errors for empty results and invalid candidate counts;
-- deterministic selection with a fixed random seed;
-- direct indexed selection from the queue without converting to another
-  container.
-
-### File masker
-
-- body masking without changing file size;
-- preservation of body braces, line endings, and subsequent offsets;
-- masking of functions and type bodies;
-- invalid-range and stale-brace detection.
-
-### Result file
-
-- function signatures with empty bodies;
-- multiline signature preservation;
-- trailing semicolon preservation for classes, structs, and `enum class`;
-- invalid source-range handling;
-- exact result-file reading for future `--check` integration.
-
-## Roadmap
-
-### Completed
-
-- [x] Interactive CLI foundation
-- [x] Typed error model
-- [x] Isolated workspace preparation
-- [x] Safe project copying
-- [x] Recursive C/C++ source discovery
-- [x] Exact source-file reading
-- [x] Lexical source sanitization
-- [x] Structural bracket analysis
-- [x] Function discovery
-- [x] Class discovery
-- [x] Structure discovery
-- [x] Exact source ranges for discovered entities
-- [x] Candidate filtering for `--functions-only` and `--all`
-- [x] Fixed-capacity top-N candidate queue
-- [x] Candidate ranking by body line count
-- [x] Random defense-target selection
-- [x] Deterministic seeded candidate selection for tests
-- [x] Mask selected entity bodies without invalidating offsets
-- [x] Generate `result.txt` with the selected entity signature
-- [x] Automated tests for the analysis pipeline
-- [x] Multi-platform CI
-
-### Next
-
-- [ ] Move source-analysis orchestration from temporary CLI debug code into
-      the application layer
-- [ ] Connect candidate selection, masking, and result-file creation to the
-      defense-session workflow
-- [ ] Implement result patching for `--check`
-- [ ] Implement project build execution
-- [ ] Capture compiler output
-- [ ] Connect the defense timer
-- [ ] Implement `--check`
-- [ ] Restore or finish a defense session cleanly
-
-### Later
-
-- [ ] Detect project build systems
-- [ ] Improve C++ syntax coverage
-- [ ] Persist defense metadata
-- [ ] Add session statistics
-- [ ] Improve terminal UX
-- [ ] Prepare a polished portfolio release
+You are free to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the software under the terms of the MIT License.

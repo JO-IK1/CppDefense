@@ -224,20 +224,32 @@ InteractiveParseResult CommandParser::ParseInteractive(
     return InteractiveParseResult::Success(type);
   };
 
-  if (IsHelpArgument(command.name)) {
-    return require_no_value(InteractiveCommandType::kHelp, "-h");
+  if (IsHelpArgument(command.name) || command.name == "help") {
+    return require_no_value(InteractiveCommandType::kHelp, "help");
   }
 
-  if (command.name == "-e" || command.name == "--exit") {
-    return require_no_value(InteractiveCommandType::kExit, "-e");
+  if (command.name == "-e" || command.name == "--exit" ||
+      command.name == "q" || command.name == "quit") {
+    return require_no_value(InteractiveCommandType::kExit, "quit");
   }
 
-  if (command.name == "-s" || command.name == "--start") {
-    return require_no_value(InteractiveCommandType::kStart, "-s");
+  if (command.name == "-s" || command.name == "--start" ||
+      command.name == "start") {
+    return require_no_value(InteractiveCommandType::kStart, "start");
   }
 
-  if (command.name == "-c" || command.name == "--check") {
-    return require_no_value(InteractiveCommandType::kCheck, "-c");
+  if (command.name == "-c" || command.name == "--check" ||
+      command.name == "b" || command.name == "build" ||
+      command.name == "check") {
+    return require_no_value(InteractiveCommandType::kCheck, "check");
+  }
+
+  if (command.name == "i" || command.name == "info") {
+    return require_no_value(InteractiveCommandType::kInfo, "info");
+  }
+
+  if (command.name == "time") {
+    return require_no_value(InteractiveCommandType::kTime, "time");
   }
 
   if (command.name == "-p" || command.name == "--path") {
@@ -307,22 +319,24 @@ std::string CommandParser::UsageText() {
          "\n"
          "Options:\n"
          "  -h, --help                 Show this help message.\n"
-         "  -p, --path <directory>     Select a project directory\n"
-         "  -n, --functions <count>    Number of candidate functions.\n"
-         "  -t, --timer <minutes>      Defense timer in minutes.\n"
-         "      --functions-only       Pick only functions. Default behavior.\n"
-         "      --all                  Allow all supported code fragments.\n"
+         "  -p, --path <directory>     Select a project directory.\n"
+         "  -n, --functions <count>    Candidate count from 1 to 50.\n"
+         "  -t, --timer <minutes>      Defense timer from 1 to 180 minutes.\n"
+         "      --functions-only       Pick only functions (default).\n"
+         "      --all                  Allow all supported code entities.\n"
          "\n"
          "Interactive commands:\n"
-         "  -h, --help                 Show this help message.\n"
+         "  start, -s, --start         Start or restart a defense session.\n"
+         "  check, build, -c, --check  Build and test result.txt.\n"
+         "  info, i                    Show the selected entity and paths.\n"
+         "  time                       Show remaining defense time.\n"
          "  -p, --path <directory>     Select a project directory.\n"
-         "  -n, --functions <count>    Change candidate function count.\n"
+         "  -n, --functions <count>    Change candidate count.\n"
          "  -t, --timer <minutes>      Change defense timer.\n"
          "      --functions-only       Pick only functions.\n"
-         "      --all                  Allow all supported code fragments.\n"
-         "  -s, --start                Pick a function and remove its body.\n"
-         "  -c, --check                Check the restored function.\n"
-         "  -e, --exit                 Close the application.\n";
+         "      --all                  Allow all supported code entities.\n"
+         "  help, -h, --help           Show this help message.\n"
+         "  quit, q, -e, --exit        Finish the session and exit.\n";
 }
 
 bool CommandParser::IsHelpArgument(std::string_view argument) noexcept {

@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <iosfwd>
 
-#include "cpp_defense/application/defense_service.hpp"
+#include "cpp_defense/application/defense_session.hpp"
 #include "cpp_defense/core/cli_options.hpp"
 #include "cpp_defense/ui/command_parser.hpp"
 
@@ -18,10 +18,8 @@ class CliApp {
 
   CliApp(const CliApp&) = delete;
   CliApp& operator=(const CliApp&) = delete;
-
   CliApp(CliApp&&) = delete;
   CliApp& operator=(CliApp&&) = delete;
-
   ~CliApp() = default;
 
   int Run(int argc, char* argv[]);
@@ -34,7 +32,7 @@ class CliApp {
   int RunInteractiveLoop(CliOptions& options);
 
   CommandParser command_parser_;
-  DefenseService defense_service_;
+  DefenseSession defense_session_;
   std::istream& input_;
   std::ostream& output_;
   std::ostream& error_output_;

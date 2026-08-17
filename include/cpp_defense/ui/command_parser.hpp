@@ -25,6 +25,8 @@ enum class InteractiveCommandType {
   kExit,
   kStart,
   kCheck,
+  kInfo,
+  kTime,
   kSetPath,
   kSetFunctionCount,
   kSetTimer,

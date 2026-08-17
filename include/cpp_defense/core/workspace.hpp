@@ -17,6 +17,7 @@ struct Workspace {
   std::filesystem::path result_path;
   std::filesystem::path session_data_path;
   std::filesystem::path original_fragment_path;
+  std::filesystem::path defense_result_path;
 };
 
 }  // namespace cpp_defense

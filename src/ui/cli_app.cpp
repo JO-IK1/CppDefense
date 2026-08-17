@@ -1,17 +1,12 @@
 #include "cpp_defense/ui/cli_app.hpp"
 
-#include "cpp_defense/infrastructure/simple_source_parser.hpp"
-#include "cpp_defense/infrastructure/source_file_repository.hpp"
-#include "cpp_defense/infrastructure/file_masker.hpp"
-#include "cpp_defense/infrastructure/result_file.hpp"
-#include "cpp_defense/application/candidate_picker.hpp"
-
-#include <string_view>
-#include <vector>
+#include <chrono>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace cpp_defense {
@@ -19,6 +14,72 @@ namespace {
 
 constexpr int kSuccessExitCode = 0;
 constexpr int kErrorExitCode = 1;
+
+std::string_view EntityTypeName(CodeEntityType type) {
+  switch (type) {
+    case CodeEntityType::kFunction:
+      return "function";
+    case CodeEntityType::kClass:
+      return "class";
+    case CodeEntityType::kStruct:
+      return "struct";
+    case CodeEntityType::kEnumClass:
+      return "enum class";
+  }
+  return "unknown";
+}
+
+std::string_view DefenseStatusName(DefenseStatus status) {
+  switch (status) {
+    case DefenseStatus::kIdle:
+      return "idle";
+    case DefenseStatus::kPreparing:
+      return "preparing";
+    case DefenseStatus::kWorkspaceReady:
+      return "workspace ready";
+    case DefenseStatus::kActive:
+      return "active";
+    case DefenseStatus::kChecking:
+      return "checking";
+    case DefenseStatus::kSuccess:
+      return "success";
+    case DefenseStatus::kFailed:
+      return "failed";
+    case DefenseStatus::kExpired:
+      return "expired";
+    case DefenseStatus::kError:
+      return "error";
+  }
+  return "unknown";
+}
+
+void PrintStep(std::ostream& output,
+               std::string_view name,
+               const BuildStepResult& step) {
+  if (!step.attempted) {
+    output << name << ": skipped\n";
+    return;
+  }
+
+  output << name << ": " << (step.succeeded ? "OK" : "FAILED") << '\n';
+
+  if (!step.succeeded && !step.output.empty()) {
+    output << "\n" << step.output;
+    if (step.output.back() != '\n') {
+      output << '\n';
+    }
+  }
+}
+
+void PrintRemaining(std::ostream& output, std::chrono::seconds remaining) {
+  const auto total_seconds = remaining.count();
+  const auto minutes = total_seconds / 60;
+  const auto seconds = total_seconds % 60;
+
+  output << "Time remaining: " << minutes << ':'
+         << std::setfill('0') << std::setw(2) << seconds
+         << std::setfill(' ') << '\n';
+}
 
 }  // namespace
 
@@ -31,7 +92,7 @@ CliApp::CliApp(std::istream& input, std::ostream& output,
 CliApp::CliApp(std::istream& input, std::ostream& output,
                std::ostream& error_output,
                std::filesystem::path cpp_defense_root_path)
-    : defense_service_(std::move(cpp_defense_root_path)),
+    : defense_session_(std::move(cpp_defense_root_path)),
       input_(input),
       output_(output),
       error_output_(error_output) {}
@@ -69,6 +130,15 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
       return kErrorExitCode;
     }
 
+    if (defense_session_.ExpireIfNeeded()) {
+      output_ << "Defense time expired.\n";
+      const auto finish_result = defense_session_.Finish();
+      if (finish_result && defense_session_.workspace()) {
+        output_ << "Result saved: "
+                << defense_session_.workspace()->defense_result_path << '\n';
+      }
+    }
+
     const InteractiveParseResult result = command_parser_.ParseInteractive(command, options);
     if (!result.ok()) {
       error_output_ << "Error: " << result.message() << '\n';
@@ -81,8 +151,20 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
       case InteractiveCommandType::kHelp:
         PrintUsage(output_);
         break;
-      case InteractiveCommandType::kExit:
+      case InteractiveCommandType::kExit: {
+        if (defense_session_.selected_entity()) {
+          const auto finish_result = defense_session_.Finish();
+          if (!finish_result) {
+            error_output_ << "Error: " << finish_result.error().FullMessage()
+                          << '\n';
+          } else if (defense_session_.workspace()) {
+            output_ << "Result saved: "
+                    << defense_session_.workspace()->defense_result_path
+                    << '\n';
+          }
+        }
         return kSuccessExitCode;
+      }
       case InteractiveCommandType::kSetPath:
         output_ << "Project path selected: " << options.project_path() << '\n';
         break;
@@ -108,214 +190,92 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
         }
         output_ << "Starting defense...\n";
 
-        const auto project =
-            defense_service_.PrepareProject(options.project_path());
+        const CandidateSelectionMode mode =
+            options.functions_only()
+                ? CandidateSelectionMode::kFunctionsOnly
+                : CandidateSelectionMode::kAll;
 
-        if (project) {
-          output_ << "Workspace ready: " << project->workspace.cached_project_path << '\n';
+        const auto start_result = defense_session_.Start(
+            options.project_path(),
+            static_cast<std::size_t>(options.function_count()),
+            mode,
+            std::chrono::minutes(options.timer_minutes()));
 
-          output_ << "Source files found: " << project->source_files.size() << '\n';
-          
-          // DEBUG ONLY
-          for (const auto& file_path : project->source_files) {
-            output_ << "  - " << file_path << '\n';
-          }
+        if (!start_result) {
+          error_output_ << "Error: " << start_result.error().FullMessage()
+                        << '\n';
+          break;
+        }
 
-          SourceFileRepository repository;
-          SimpleSourceParser parser;
-          CandidatePicker candidate_picker;
+        output_ << "Defense started.\n"
+                << "Source files found: " << start_result->source_file_count << '\n'
+                << "Entities found: " << start_result->entity_count << '\n'
+                << "Candidates retained: " << start_result->candidate_count << '\n'
+                << "Selected: ["
+                << EntityTypeName(start_result->selected_entity.type) << "] "
+                << start_result->selected_entity.name << '\n'
+                << "Cached project: " << start_result->cached_project_path << '\n'
+                << "Edit this file: " << start_result->result_path << '\n'
+                << "Final report: " << start_result->defense_result_path << '\n';
+        PrintRemaining(output_, defense_session_.remaining_time());
+        break;
+      }
 
-          std::vector<CodeEntityInfo> all_entities;
+      case InteractiveCommandType::kInfo: {
+        if (!defense_session_.selected_entity() || !defense_session_.workspace()) {
+          error_output_ << "Error: there is no defense session.\n";
+          break;
+        }
+        const CodeEntityInfo& entity = *defense_session_.selected_entity();
+        output_ << "Status: " << DefenseStatusName(defense_session_.status()) << '\n'
+                << "Selected: [" << EntityTypeName(entity.type) << "] "
+                << entity.name << '\n'
+                << "File: " << entity.file_path << '\n'
+                << "Lines: " << entity.start_line << '-' << entity.end_line << '\n'
+                << "Edit: " << defense_session_.workspace()->result_path << '\n'
+                << "Attempts: " << defense_session_.attempts() << '\n';
+        break;
+      }
 
-          const auto EntityTypeName = [](CodeEntityType type) -> std::string_view {
-            switch (type) {
-              case CodeEntityType::kFunction:
-                return "function";
-              case CodeEntityType::kClass:
-                return "class";
-              case CodeEntityType::kStruct:
-                return "struct";
-              case CodeEntityType::kEnumClass:
-                return "enum class";
-            }
-            return "unknown";
-          };
+      case InteractiveCommandType::kTime:
+        if (defense_session_.status() == DefenseStatus::kActive) {
+          PrintRemaining(output_, defense_session_.remaining_time());
+        } else {
+          output_ << "Defense status: "
+                  << DefenseStatusName(defense_session_.status()) << '\n';
+        }
+        break;
 
-          for (const auto& file_path : project->source_files) {
-            const auto source = repository.ReadFile(file_path);
-            if (!source) {
-              error_output_ << source.error().FullMessage() << '\n';
-              continue;
-            }
+      case InteractiveCommandType::kCheck: {
+        output_ << "Checking solution...\n";
 
-            const auto entities = parser.Parse(*source, file_path);
+        const auto check_result = defense_session_.Check();
+        if (!check_result) {
+          error_output_ << "Error: " << check_result.error().FullMessage()
+                        << '\n';
+          break;
+        }
 
-            if (!entities) {
-              error_output_ << entities.error().FullMessage() << '\n';
-              continue;
-            }
+        output_ << "Attempt: " << check_result->attempt << '\n';
+        PrintStep(output_, "Configure", check_result->build_result.configure);
+        PrintStep(output_, "Build", check_result->build_result.build);
+        PrintStep(output_, "Tests", check_result->build_result.tests);
 
-            all_entities.insert(
-                all_entities.end(),
-                entities->begin(),
-                entities->end());
-          }
-
-          output_ << "Total entities found: " << all_entities.size() << '\n';
-
-          const CandidateSelectionMode selection_mode =
-              options.functions_only()
-                  ? CandidateSelectionMode::kFunctionsOnly
-                  : CandidateSelectionMode::kAll;
-
-          const auto selection = candidate_picker.Pick(
-              all_entities,
-              options.function_count(),
-              selection_mode);
-
-          if (!selection) {
-            error_output_ << "Candidate picker error: "
-                          << selection.error().FullMessage()
-                          << '\n';
-            break;
-          }
-
-          output_ << "\nCandidates:\n";
-
-          for (std::size_t index = 0;
-              index < selection->candidates.size();
-              ++index) {
-            const CodeEntityInfo& candidate =
-                selection->candidates[index];
-
-            output_ << "  [" << index << "] "
-                    << '[' << EntityTypeName(candidate.type) << "] "
-                    << candidate.name
-                    << " | body lines: "
-                    << candidate.body_line_count()
+        if (check_result->status == DefenseStatus::kExpired) {
+          output_ << "Defense time expired during the check.\n";
+        } else if (check_result->build_result.success()) {
+          output_ << "Defense passed.\n";
+          if (defense_session_.workspace()) {
+            output_ << "Result saved: "
+                    << defense_session_.workspace()->defense_result_path
                     << '\n';
           }
-
-          const CodeEntityInfo& selected = selection->selected();
-
-          output_ << "\n===== SELECTED CANDIDATE =====\n";
-          output_ << "Index: " << selection->selected_index << '\n';
-          output_ << "Type: " << EntityTypeName(selected.type) << '\n';
-          output_ << "Name: " << selected.name << '\n';
-          output_ << "File: " << selected.file_path << '\n';
-
-          output_ << "Lines: "
-                  << selected.start_line
-                  << '-'
-                  << selected.end_line
-                  << '\n';
-
-          output_ << "Body lines: "
-                  << selected.body_start_line
-                  << '-'
-                  << selected.body_end_line
-                  << " ("
-                  << selected.body_line_count()
-                  << " lines)\n";
-
-          output_ << "Offsets: ["
-                  << selected.start_offset
-                  << ", "
-                  << selected.end_offset
-                  << ")\n";
-
-          output_ << "Body offsets: ["
-                  << selected.body_start_offset
-                  << ", "
-                  << selected.body_end_offset
-                  << ")\n";
-
-          const auto selected_source =
-              repository.ReadFile(selected.file_path);
-
-          if (!selected_source) {
-            error_output_ << selected_source.error().FullMessage()
-                          << '\n';
-            break;
-          }
-
-          const std::string_view selected_code(
-              selected_source->data() + selected.start_offset,
-              selected.end_offset - selected.start_offset);
-
-          output_ << "\n----- SOURCE BEFORE MASK -----\n";
-          output_ << selected_code << '\n';
-          output_ << "------------------------------\n";
-
-          ResultFile result_file;
-          const auto result_file_create = result_file.Create(
-              selected,
-              project->workspace.result_path);
-
-          if (!result_file_create) {
-            error_output_ << "Result file error: "
-                          << result_file_create.error().FullMessage()
-                          << '\n';
-            break;
-          }
-
-          output_ << "Result file created: "
-                  << project->workspace.result_path
-                  << '\n';
-
-          const auto result_contents =
-              result_file.Read(project->workspace.result_path);
-
-          if (!result_contents) {
-            error_output_ << "Result file error: "
-                          << result_contents.error().FullMessage()
-                          << '\n';
-            break;
-          }
-
-          output_ << "\n----- RESULT.TXT -----\n";
-          output_ << *result_contents;
-          output_ << "----------------------\n";
-
-          FileMasker file_masker;
-          const auto mask_result = file_masker.Mask(selected);
-
-          if (!mask_result) {
-            error_output_ << "File masker error: "
-                          << mask_result.error().FullMessage()
-                          << '\n';
-            break;
-          }
-
-          output_ << "Selected entity masked in cached project.\n";
-          output_ << "Masked file: " << selected.file_path << '\n';
-
-          const auto masked_source =
-              repository.ReadFile(selected.file_path);
-
-          if (!masked_source) {
-            error_output_ << masked_source.error().FullMessage()
-                          << '\n';
-            break;
-          }
-
-          const std::string_view masked_code(
-              masked_source->data() + selected.start_offset,
-              selected.end_offset - selected.start_offset);
-
-          output_ << "\n----- SOURCE AFTER MASK -----\n";
-          output_ << masked_code << '\n';
-          output_ << "-----------------------------\n";
-          output_ << "==============================\n\n";
-          // END DEBUG ONLY
         } else {
-          error_output_ << "Error: " << project.error().FullMessage() << '\n';
+          output_ << "Check failed. Fix result.txt and run --check again.\n";
+          PrintRemaining(output_, defense_session_.remaining_time());
         }
         break;
       }
-      case InteractiveCommandType::kCheck:
-        output_ << "Check function...\n";
-        break;
     }
   }
 }
