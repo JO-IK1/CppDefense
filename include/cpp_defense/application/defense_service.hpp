@@ -12,7 +12,7 @@ namespace cpp_defense {
 
 class DefenseService {
  public:
-  explicit DefenseService(std::filesystem::path cpp_defense_root_path);
+  explicit DefenseService(std::filesystem::path runtime_root_path);
 
   std::expected<PreparedProject, ProjectPreparationError> PrepareProject(
       const std::filesystem::path& source_project_path) const;

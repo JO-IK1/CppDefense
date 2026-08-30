@@ -9,6 +9,8 @@
 #include <string_view>
 #include <utility>
 
+#include "cpp_defense/infrastructure/runtime_path.hpp"
+
 namespace cpp_defense {
 namespace {
 
@@ -63,6 +65,10 @@ void PrintStep(std::ostream& output,
 
   output << name << ": " << (step.succeeded ? "OK" : "FAILED") << '\n';
 
+  if (step.timed_out) {
+    output << "Reason: time limit exceeded\n";
+  }
+
   if (!step.succeeded && !step.output.empty()) {
     output << "\n" << step.output;
     if (step.output.back() != '\n') {
@@ -83,16 +89,17 @@ void PrintRemaining(std::ostream& output, std::chrono::seconds remaining) {
 
 }  // namespace
 
-CliApp::CliApp() : CliApp(std::cin, std::cout, std::cerr, ".") {}
+CliApp::CliApp()
+    : CliApp(std::cin, std::cout, std::cerr, ResolveRuntimeRoot()) {}
 
 CliApp::CliApp(std::istream& input, std::ostream& output,
                std::ostream& error_output)
-    : CliApp(input, output, error_output, ".") {}
+    : CliApp(input, output, error_output, ResolveRuntimeRoot()) {}
 
 CliApp::CliApp(std::istream& input, std::ostream& output,
                std::ostream& error_output,
-               std::filesystem::path cpp_defense_root_path)
-    : defense_session_(std::move(cpp_defense_root_path)),
+               std::filesystem::path runtime_root_path)
+    : defense_session_(std::move(runtime_root_path)),
       input_(input),
       output_(output),
       error_output_(error_output) {}
@@ -126,8 +133,19 @@ int CliApp::RunInteractiveLoop(CliOptions& options) {
     output_ << "> " << std::flush;
 
     if (!std::getline(input_, command)) {
-      error_output_ << "Error: input stream was closed.\n";
-      return kErrorExitCode;
+      if (defense_session_.selected_entity()) {
+        const auto finish_result = defense_session_.Finish();
+        if (!finish_result) {
+          error_output_ << "Error: " << finish_result.error().FullMessage()
+                        << '\n';
+          return kErrorExitCode;
+        }
+        if (defense_session_.workspace()) {
+          output_ << "Input closed. Result saved: "
+                  << defense_session_.workspace()->defense_result_path << '\n';
+        }
+      }
+      return kSuccessExitCode;
     }
 
     if (defense_session_.ExpireIfNeeded()) {

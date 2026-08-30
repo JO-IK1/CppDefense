@@ -45,7 +45,7 @@ struct DefenseCheckResult {
 
 class DefenseSession {
  public:
-  explicit DefenseSession(std::filesystem::path cpp_defense_root_path);
+  explicit DefenseSession(std::filesystem::path runtime_root_path);
 
   std::expected<DefenseStartResult, DefenseSessionError> Start(
       const std::filesystem::path& source_project_path,
@@ -66,6 +66,7 @@ class DefenseSession {
 
  private:
   std::expected<DefenseResult, DefenseSessionError> SaveResult(DefenseStatus final_status);
+  void FinalizeStatus(DefenseStatus final_status);
   std::chrono::seconds elapsed_time() const;
 
   DefenseService defense_service_;
@@ -84,6 +85,7 @@ class DefenseSession {
   std::optional<Workspace> workspace_;
   std::optional<CodeEntityInfo> selected_entity_;
   std::optional<DefenseTimer::TimePoint> start_time_;
+  std::optional<DefenseTimer::TimePoint> finish_time_;
   std::size_t attempts_ = 0;
   std::string last_build_log_;
 };

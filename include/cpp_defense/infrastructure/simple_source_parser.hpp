@@ -16,6 +16,9 @@ class SimpleSourceParser {
  public:
   std::expected<CodeEntities, ParseError> Parse(
       std::string_view source, const std::filesystem::path& file_path) const;
+
+  std::expected<void, ParseError> ValidateBody(
+      std::string_view body, const std::filesystem::path& file_path) const;
 };
 
 }  // namespace cpp_defense

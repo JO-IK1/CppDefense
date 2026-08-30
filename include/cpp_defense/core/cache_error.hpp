@@ -9,11 +9,11 @@ namespace cpp_defense {
 
 enum class CacheErrorType {
   kSourcePathMissing,
-  kCppDefenseRootMissing,
+  kRuntimeRootUnavailable,
   kPathIsNotDirectory,
   kCannotDetermineAbsolutePath,
   kCannotDetermineProjectName,
-  kSourceProjectEqualsCppDefense,
+  kSourceProjectEqualsRuntimeRoot,
   kSourceProjectInsideCache,
   kCacheInsideSourceProject,
   kDangerousCleanupPath,
@@ -57,9 +57,9 @@ inline CacheError SourcePathMissing(const std::filesystem::path& path) {
                     "Source path does not exist", path);
 }
 
-inline CacheError CppDefenseRootMissing(const std::filesystem::path& path) {
-  return CacheError(CacheErrorType::kCppDefenseRootMissing,
-                    "CppDefense root path does not exist", path);
+inline CacheError RuntimeRootUnavailable(const std::filesystem::path& path) {
+  return CacheError(CacheErrorType::kRuntimeRootUnavailable,
+                    "Runtime root path is unavailable", path);
 }
 
 inline CacheError PathIsNotDirectory(const std::filesystem::path& path) {
@@ -78,9 +78,10 @@ inline CacheError CannotDetermineProjectName(const std::filesystem::path& path) 
                     "Cannot determine source project directory name", path);
 }
 
-inline CacheError SourceProjectEqualsCppDefense(const std::filesystem::path& path) {
-  return CacheError(CacheErrorType::kSourceProjectEqualsCppDefense,
-                    "Source project is CppDefense itself", path);
+inline CacheError SourceProjectEqualsRuntimeRoot(
+    const std::filesystem::path& path) {
+  return CacheError(CacheErrorType::kSourceProjectEqualsRuntimeRoot,
+                    "Source project equals the runtime root", path);
 }
 
 inline CacheError SourceProjectInsideCache(const std::filesystem::path& path) {

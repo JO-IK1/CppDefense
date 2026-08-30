@@ -5,7 +5,7 @@
 namespace cpp_defense {
 
 struct Workspace {
-  std::filesystem::path cpp_defense_root_path;
+  std::filesystem::path runtime_root_path;
   std::filesystem::path source_project_path;
   std::filesystem::path cache_root_path;
   std::filesystem::path session_root_path;

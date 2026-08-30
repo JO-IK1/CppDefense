@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(CppDefense VERSION 1.0.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -21,17 +23,16 @@ add_library(cpp-defense-lib
   src/infrastructure/project_scanner.cpp
   src/infrastructure/source_file_repository.cpp
   src/infrastructure/simple_source_parser.cpp
-  src/infrastructure/source_parser/source_lexer.cpp
-  src/infrastructure/source_parser/source_structure.cpp
-  src/infrastructure/source_parser/source_function_parser.cpp
-  src/infrastructure/source_parser/source_type_parser.cpp
-  src/infrastructure/source_parser/source_entity_finder.cpp
+  src/infrastructure/source_parser/source_analysis.cpp
+  src/infrastructure/source_parser/entity_parser.cpp
   src/infrastructure/file_masker.cpp
   src/infrastructure/result_file.cpp
   src/infrastructure/file_patcher.cpp
   src/infrastructure/check_workspace.cpp
   src/infrastructure/defense_result_writer.cpp
   src/infrastructure/build_runner.cpp
+  src/infrastructure/process_runner.cpp
+  src/infrastructure/runtime_path.cpp
 
   src/ui/cli_app.cpp
   src/ui/command_parser.cpp
@@ -73,7 +74,14 @@ target_link_libraries(cpp-defense
 )
 
 install(TARGETS cpp-defense
-  RUNTIME DESTINATION bin
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(FILES README.md LICENSE
+  DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
+install(DIRECTORY docs/
+  DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )
 
 
@@ -83,166 +91,30 @@ install(TARGETS cpp-defense
 
 enable_testing()
 
-add_executable(cpp-defense-tests
-  tests/workspace_cache_test.cpp
-)
+function(add_cpp_defense_test_target target source)
+  add_executable(${target} ${source})
+  target_link_libraries(${target} PRIVATE cpp-defense-lib)
+  if (MSVC)
+    target_compile_options(${target} PRIVATE /W4)
+  else()
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+endfunction()
 
-add_executable(cpp-defense-project-scanner-tests
-  tests/project_scanner_test.cpp
-)
-
-add_executable(cpp-defense-source-file-repository-tests
-  tests/source_file_repository_test.cpp
-)
-
-add_executable(cpp-defense-source-parser-tests
-  tests/simple_source_parser_test.cpp
-)
-
-add_executable(cpp-defense-fixed-priority-queue-tests
-  tests/fixed_priority_queue_test.cpp
-)
-
-add_executable(cpp-defense-candidate-picker-tests
-  tests/candidate_picker_test.cpp
-)
-
-add_executable(cpp-defense-file-masker-tests
-  tests/file_masker_test.cpp
-)
-
-add_executable(cpp-defense-result-file-tests
-  tests/result_file_test.cpp
-)
-
-add_executable(cpp-defense-file-patcher-tests
-  tests/file_patcher_test.cpp
-)
-
-add_executable(cpp-defense-timer-tests
-  tests/defense_timer_test.cpp
-)
-
-add_executable(cpp-defense-build-runner-tests
-  tests/build_runner_test.cpp
-)
-
-add_executable(cpp-defense-session-tests
-  tests/defense_session_test.cpp
-)
-
-target_link_libraries(cpp-defense-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-project-scanner-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-source-file-repository-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-source-parser-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-fixed-priority-queue-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-candidate-picker-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-file-masker-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-result-file-tests
-  PRIVATE
-    cpp-defense-lib
-)
-
-target_link_libraries(cpp-defense-file-patcher-tests PRIVATE cpp-defense-lib)
-target_link_libraries(cpp-defense-timer-tests PRIVATE cpp-defense-lib)
-target_link_libraries(cpp-defense-build-runner-tests PRIVATE cpp-defense-lib)
-target_link_libraries(cpp-defense-session-tests PRIVATE cpp-defense-lib)
-
-if (MSVC)
-  target_compile_options(cpp-defense-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-project-scanner-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-source-file-repository-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-source-parser-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-fixed-priority-queue-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-candidate-picker-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-file-masker-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-result-file-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-file-patcher-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-timer-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-build-runner-tests PRIVATE /W4)
-  target_compile_options(cpp-defense-session-tests PRIVATE /W4)
-else()
-  target_compile_options(
-    cpp-defense-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(
-    cpp-defense-project-scanner-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(
-    cpp-defense-source-file-repository-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(
-    cpp-defense-source-parser-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(
-    cpp-defense-fixed-priority-queue-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(
-    cpp-defense-candidate-picker-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(
-    cpp-defense-file-masker-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(
-    cpp-defense-result-file-tests
-    PRIVATE
-      -Wall -Wextra -Wpedantic
-  )
-
-  target_compile_options(cpp-defense-file-patcher-tests PRIVATE -Wall -Wextra -Wpedantic)
-  target_compile_options(cpp-defense-timer-tests PRIVATE -Wall -Wextra -Wpedantic)
-  target_compile_options(cpp-defense-build-runner-tests PRIVATE -Wall -Wextra -Wpedantic)
-  target_compile_options(cpp-defense-session-tests PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+add_cpp_defense_test_target(cpp-defense-tests tests/workspace_cache_test.cpp)
+add_cpp_defense_test_target(cpp-defense-project-scanner-tests tests/project_scanner_test.cpp)
+add_cpp_defense_test_target(cpp-defense-source-file-repository-tests tests/source_file_repository_test.cpp)
+add_cpp_defense_test_target(cpp-defense-source-parser-tests tests/simple_source_parser_test.cpp)
+add_cpp_defense_test_target(cpp-defense-fixed-priority-queue-tests tests/fixed_priority_queue_test.cpp)
+add_cpp_defense_test_target(cpp-defense-candidate-picker-tests tests/candidate_picker_test.cpp)
+add_cpp_defense_test_target(cpp-defense-file-masker-tests tests/file_masker_test.cpp)
+add_cpp_defense_test_target(cpp-defense-result-file-tests tests/result_file_test.cpp)
+add_cpp_defense_test_target(cpp-defense-file-patcher-tests tests/file_patcher_test.cpp)
+add_cpp_defense_test_target(cpp-defense-timer-tests tests/defense_timer_test.cpp)
+add_cpp_defense_test_target(cpp-defense-build-runner-tests tests/build_runner_test.cpp)
+add_cpp_defense_test_target(cpp-defense-session-tests tests/defense_session_test.cpp)
+add_cpp_defense_test_target(cpp-defense-runtime-path-tests tests/runtime_path_test.cpp)
+add_cpp_defense_test_target(cpp-defense-ui-tests tests/ui_test.cpp)
 
 set(WORKSPACE_CACHE_TEST_CASES
   prepare-existing
@@ -324,6 +196,8 @@ set(SOURCE_PARSER_TEST_CASES
   noexcept-operator
   friend-operator-free
   control-flow-inside-function
+  requires-clause
+  body-validation
   unterminated-block-comment
   unterminated-string-literal
   unmatched-opening-brace
@@ -389,9 +263,9 @@ foreach(test_case IN LISTS FILE_MASKER_TEST_CASES)
 endforeach()
 
 set(RESULT_FILE_TEST_CASES
-  function-signature
-  multiline-signature
-  type-semicolon
+  body-template
+  multiline-declaration-hidden
+  type-declaration-hidden
   reject-invalid-range
   read-missing-file
 )
@@ -403,7 +277,7 @@ foreach(test_case IN LISTS RESULT_FILE_TEST_CASES)
   )
 endforeach()
 
-set(FILE_PATCHER_TEST_CASES patch outside-project)
+set(FILE_PATCHER_TEST_CASES patch reject-body-escape outside-project)
 foreach(test_case IN LISTS FILE_PATCHER_TEST_CASES)
   add_test(NAME file-patcher.${test_case} COMMAND cpp-defense-file-patcher-tests ${test_case})
 endforeach()
@@ -413,12 +287,37 @@ foreach(test_case IN LISTS DEFENSE_TIMER_TEST_CASES)
   add_test(NAME defense-timer.${test_case} COMMAND cpp-defense-timer-tests ${test_case})
 endforeach()
 
-set(BUILD_RUNNER_TEST_CASES success compile-failure test-failure unsupported)
+set(BUILD_RUNNER_TEST_CASES
+  success compile-failure test-failure unsupported special-path timeout)
 foreach(test_case IN LISTS BUILD_RUNNER_TEST_CASES)
   add_test(NAME build-runner.${test_case} COMMAND cpp-defense-build-runner-tests ${test_case})
 endforeach()
 
-set(DEFENSE_SESSION_TEST_CASES start retry-success expired no-active-session)
+set(DEFENSE_SESSION_TEST_CASES
+  start retry-success expired no-active-session stable-finished-time
+  check-timeout)
 foreach(test_case IN LISTS DEFENSE_SESSION_TEST_CASES)
   add_test(NAME defense-session.${test_case} COMMAND cpp-defense-session-tests ${test_case})
 endforeach()
+
+foreach(test_case IN ITEMS override platforms fallback)
+  add_test(NAME runtime-path.${test_case}
+           COMMAND cpp-defense-runtime-path-tests ${test_case})
+endforeach()
+
+foreach(test_case IN ITEMS command-parser eof-finalizes)
+  add_test(NAME ui.${test_case} COMMAND cpp-defense-ui-tests ${test_case})
+endforeach()
+
+set(CPACK_PACKAGE_NAME "CppDefense")
+set(CPACK_PACKAGE_VENDOR "CppDefense")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_FILE_NAME
+    "cpp-defense-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE")
+if (WIN32)
+  set(CPACK_GENERATOR ZIP)
+else()
+  set(CPACK_GENERATOR TGZ)
+endif()
+include(CPack)

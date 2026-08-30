@@ -50,8 +50,8 @@ std::string CombinedBuildLog(const BuildResult& result) {
 
 }  // namespace
 
-DefenseSession::DefenseSession(std::filesystem::path cpp_defense_root_path)
-    : defense_service_(std::move(cpp_defense_root_path)) {}
+DefenseSession::DefenseSession(std::filesystem::path runtime_root_path)
+    : defense_service_(std::move(runtime_root_path)) {}
 
 std::expected<DefenseStartResult, DefenseSessionError> DefenseSession::Start(
     const std::filesystem::path& source_project_path,
@@ -62,6 +62,7 @@ std::expected<DefenseStartResult, DefenseSessionError> DefenseSession::Start(
   workspace_.reset();
   selected_entity_.reset();
   start_time_.reset();
+  finish_time_.reset();
   attempts_ = 0;
   last_build_log_.clear();
   status_ = DefenseStatus::kPreparing;
@@ -190,7 +191,8 @@ std::expected<DefenseCheckResult, DefenseSessionError> DefenseSession::Check() {
 
   ++attempts_;
   const auto build_result = build_runner_.Run(
-      check_paths->project_path, check_paths->build_path, workspace_->logs_path);
+      check_paths->project_path, check_paths->build_path, workspace_->logs_path,
+      timer_.remaining_duration());
   if (!build_result) {
     status_ = DefenseStatus::kActive;
     return std::unexpected(MakeError(
@@ -200,9 +202,8 @@ std::expected<DefenseCheckResult, DefenseSessionError> DefenseSession::Check() {
 
   last_build_log_ = CombinedBuildLog(*build_result);
 
-  if (timer_.expired()) {
-    timer_.Stop();
-    status_ = DefenseStatus::kExpired;
+  if (build_result->timed_out() || timer_.expired()) {
+    FinalizeStatus(DefenseStatus::kExpired);
     const auto saved = SaveResult(status_);
     if (!saved) {
       status_ = DefenseStatus::kError;
@@ -216,8 +217,7 @@ std::expected<DefenseCheckResult, DefenseSessionError> DefenseSession::Check() {
   }
 
   if (build_result->success()) {
-    timer_.Stop();
-    status_ = DefenseStatus::kSuccess;
+    FinalizeStatus(DefenseStatus::kSuccess);
     const auto saved = SaveResult(status_);
     if (!saved) {
       status_ = DefenseStatus::kError;
@@ -242,10 +242,12 @@ std::expected<DefenseResult, DefenseSessionError> DefenseSession::Finish() {
   }
 
   if (status_ == DefenseStatus::kActive || status_ == DefenseStatus::kChecking) {
-    timer_.Stop();
-    status_ = DefenseStatus::kFailed;
+    FinalizeStatus(DefenseStatus::kFailed);
   } else if (status_ == DefenseStatus::kExpired) {
     timer_.Stop();
+    if (!finish_time_) {
+      finish_time_ = DefenseTimer::Clock::now();
+    }
   }
 
   return SaveResult(status_);
@@ -280,8 +282,7 @@ std::expected<DefenseResult, DefenseSessionError> DefenseSession::SaveResult(
 
 bool DefenseSession::ExpireIfNeeded() {
   if (status_ == DefenseStatus::kActive && timer_.expired()) {
-    timer_.Stop();
-    status_ = DefenseStatus::kExpired;
+    FinalizeStatus(DefenseStatus::kExpired);
     return true;
   }
   return false;
@@ -304,12 +305,21 @@ const std::optional<Workspace>& DefenseSession::workspace() const noexcept {
   return workspace_;
 }
 
+void DefenseSession::FinalizeStatus(DefenseStatus final_status) {
+  timer_.Stop();
+  status_ = final_status;
+  if (!finish_time_) {
+    finish_time_ = DefenseTimer::Clock::now();
+  }
+}
+
 std::chrono::seconds DefenseSession::elapsed_time() const {
   if (!start_time_) {
     return std::chrono::seconds::zero();
   }
+  const auto end_time = finish_time_.value_or(DefenseTimer::Clock::now());
   return std::chrono::duration_cast<std::chrono::seconds>(
-      DefenseTimer::Clock::now() - *start_time_);
+      end_time - *start_time_);
 }
 
 }  // namespace cpp_defense

@@ -680,6 +680,30 @@ bool TestControlFlowInsideFunctionDoesNotBecomeFunction() {
          ExpectEntity(result->front(), CodeEntityType::kFunction, "Run");
 }
 
+bool TestRequiresClause() {
+  const std::string source =
+      "template <typename T>\n"
+      "T Identity(T value) requires (sizeof(T) > 0) {\n"
+      "  return value;\n"
+      "}\n";
+  const SimpleSourceParser parser;
+  const auto result = parser.Parse(source, "concept.cpp");
+  return Expect(result.has_value(), "requires clause parses") &&
+         Expect(result->size() == 1, "one constrained function is found") &&
+         ExpectEntity(result->front(), CodeEntityType::kFunction, "Identity");
+}
+
+bool TestBodyValidation() {
+  const SimpleSourceParser parser;
+  const auto valid = parser.ValidateBody(
+      "if (true) { return; }\nconst char* brace = \"}\";", "result.txt");
+  const auto escape = parser.ValidateBody("}\nint injected = 1;\n{", "result.txt");
+  return Expect(valid.has_value(), "nested body is valid") &&
+         Expect(!escape.has_value(), "body cannot escape outer braces") &&
+         Expect(escape.error().type == ParseErrorType::kInvalidBodyBoundary,
+                "escaped body reports boundary error");
+}
+
 
 bool TestUnterminatedBlockComment() {
   const std::string source =
@@ -776,6 +800,8 @@ constexpr TestCase kTestCases[] = {
     {"noexcept-operator", TestNoexceptOperator},
     {"friend-operator-free", TestFriendOperatorRemainsFreeFunction},
     {"control-flow-inside-function", TestControlFlowInsideFunctionDoesNotBecomeFunction},
+    {"requires-clause", TestRequiresClause},
+    {"body-validation", TestBodyValidation},
     {"unterminated-block-comment", TestUnterminatedBlockComment},
     {"unterminated-string-literal", TestUnterminatedStringLiteral},
     {"unmatched-opening-brace", TestUnmatchedOpeningBrace},

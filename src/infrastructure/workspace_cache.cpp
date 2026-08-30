@@ -12,7 +12,7 @@ namespace {
 
 std::expected<std::filesystem::path, CacheError> NormalizeDirectoryPath(
     const std::filesystem::path& path, std::string_view path_description,
-    CacheErrorType missing_path_error) {
+    CacheErrorType missing_path_error, bool create_if_missing = false) {
   if (path.empty()) {
     return std::unexpected(CacheError(
         missing_path_error,
@@ -26,10 +26,20 @@ std::expected<std::filesystem::path, CacheError> NormalizeDirectoryPath(
         CannotDetermineAbsolutePath(path, error_code));
   }
 
-  const bool exists = std::filesystem::exists(absolute_path, error_code);
+  bool exists = std::filesystem::exists(absolute_path, error_code);
   if (error_code) {
     return std::unexpected(
         OtherFilesystemError(absolute_path, error_code));
+  }
+
+  if (!exists) {
+    if (create_if_missing) {
+      std::filesystem::create_directories(absolute_path, error_code);
+      if (error_code) {
+        return std::unexpected(FailedToCreateDirectory(absolute_path, error_code));
+      }
+      exists = true;
+    }
   }
 
   if (!exists) {
@@ -72,9 +82,9 @@ bool IsSameOrDescendant(const std::filesystem::path& candidate,
 }
 
 std::expected<void, CacheError> ValidateWorkspaceRelationships(const Workspace& workspace) {
-  if (workspace.source_project_path == workspace.cpp_defense_root_path) {
+  if (workspace.source_project_path == workspace.runtime_root_path) {
     return std::unexpected(
-        SourceProjectEqualsCppDefense(workspace.source_project_path));
+        SourceProjectEqualsRuntimeRoot(workspace.source_project_path));
   }
 
   if (IsSameOrDescendant(workspace.source_project_path,
@@ -94,7 +104,7 @@ std::expected<void, CacheError> ValidateWorkspaceRelationships(const Workspace& 
 
 std::expected<void, CacheError> ValidateCleanupTarget(const Workspace& workspace) {
   if (workspace.cache_root_path.parent_path() !=
-          workspace.cpp_defense_root_path ||
+          workspace.runtime_root_path ||
       workspace.cache_root_path.filename() != "cache" ||
       workspace.session_root_path.parent_path() != workspace.cache_root_path ||
       workspace.session_root_path.filename() != "current") {
@@ -197,16 +207,16 @@ std::expected<void, CacheError> CopySourceProject(const Workspace& workspace) {
 
 }  // namespace
 
-WorkspaceCache::WorkspaceCache(std::filesystem::path cpp_defense_root_path)
-    : cpp_defense_root_path_(std::move(cpp_defense_root_path)) {}
+WorkspaceCache::WorkspaceCache(std::filesystem::path runtime_root_path)
+    : runtime_root_path_(std::move(runtime_root_path)) {}
 
 std::expected<Workspace, CacheError> WorkspaceCache::CalculateWorkspace(
     const std::filesystem::path& source_project_path) const {
-  const auto normalized_cpp_defense_root = NormalizeDirectoryPath(
-      cpp_defense_root_path_, "CppDefense root",
-      CacheErrorType::kCppDefenseRootMissing);
-  if (!normalized_cpp_defense_root) {
-    return std::unexpected(normalized_cpp_defense_root.error());
+  const auto normalized_runtime_root = NormalizeDirectoryPath(
+      runtime_root_path_, "Runtime root",
+      CacheErrorType::kRuntimeRootUnavailable, true);
+  if (!normalized_runtime_root) {
+    return std::unexpected(normalized_runtime_root.error());
   }
 
   const auto normalized_source_project = NormalizeDirectoryPath(
@@ -223,9 +233,9 @@ std::expected<Workspace, CacheError> WorkspaceCache::CalculateWorkspace(
   }
 
   Workspace workspace;
-  workspace.cpp_defense_root_path = *normalized_cpp_defense_root;
+  workspace.runtime_root_path = *normalized_runtime_root;
   workspace.source_project_path = *normalized_source_project;
-  workspace.cache_root_path = (workspace.cpp_defense_root_path / "cache").lexically_normal();
+  workspace.cache_root_path = (workspace.runtime_root_path / "cache").lexically_normal();
   workspace.session_root_path = (workspace.cache_root_path / "current").lexically_normal();
   workspace.project_container_path = (workspace.session_root_path / "project").lexically_normal();
   workspace.cached_project_path = (workspace.project_container_path / project_name).lexically_normal();

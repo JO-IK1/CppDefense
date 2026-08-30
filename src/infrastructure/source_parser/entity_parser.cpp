@@ -1,18 +1,22 @@
-#include "source_function_parser.hpp"
+#include "entity_parser.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace cpp_defense::source_parser_internal {
 namespace {
 
-constexpr std::array<std::string_view, 10> kRejectedFunctionNames{
+constexpr std::array<std::string_view, 11> kRejectedFunctionNames{
     "if",       "for",      "while",    "switch",  "catch",
-    "sizeof",   "alignof",  "decltype", "noexcept", "static_assert",
+    "sizeof",   "alignof",  "decltype", "noexcept", "requires",
+    "static_assert",
 };
 
 constexpr std::array<std::string_view, 3> kAccessSpecifiers{
@@ -443,6 +447,197 @@ std::optional<EntityCandidate> TryFindFunctionCandidate(
   }
 
   return std::nullopt;
+}
+
+namespace {
+
+struct TypeKeyword {
+  CodeEntityType type;
+  std::size_t declaration_start;
+  std::size_t name_start;
+};
+
+std::optional<TypeKeyword> FindTypeKeyword(std::string_view declaration) {
+  std::optional<TypeKeyword> result;
+  std::string_view previous;
+  std::size_t previous_start = kNoOffset;
+
+  for (std::size_t offset = 0; offset < declaration.size();) {
+    if (!IsIdentifierStart(declaration[offset])) {
+      ++offset;
+      continue;
+    }
+    const std::size_t start = offset++;
+    while (offset < declaration.size() &&
+           IsIdentifierCharacter(declaration[offset])) {
+      ++offset;
+    }
+    const std::string_view token = declaration.substr(start, offset - start);
+    if (token == "class" || token == "struct") {
+      const bool scoped_enum = previous == "enum";
+      result = TypeKeyword{
+          .type = scoped_enum
+                      ? CodeEntityType::kEnumClass
+                      : (token == "class" ? CodeEntityType::kClass
+                                          : CodeEntityType::kStruct),
+          .declaration_start = scoped_enum ? previous_start : start,
+          .name_start = offset,
+      };
+    }
+    previous = token;
+    previous_start = start;
+  }
+  return result;
+}
+
+std::optional<EntityCandidate> TryFindTypeCandidate(
+    std::string_view source, const StructureInfo& structure,
+    std::size_t opening_brace) {
+  const std::size_t boundary = FindPreviousBoundary(source, opening_brace);
+  const std::string_view declaration =
+      source.substr(boundary, opening_brace - boundary);
+  const auto keyword = FindTypeKeyword(declaration);
+  if (!keyword) {
+    return std::nullopt;
+  }
+
+  std::size_t name_start = SkipWhitespaceForward(
+      declaration, keyword->name_start, declaration.size());
+  if (name_start >= declaration.size() ||
+      !IsIdentifierStart(declaration[name_start])) {
+    return std::nullopt;
+  }
+  std::size_t name_end = name_start + 1;
+  while (name_end < declaration.size() &&
+         IsIdentifierCharacter(declaration[name_end])) {
+    ++name_end;
+  }
+
+  const std::string_view suffix = declaration.substr(name_end);
+  if (suffix.find_first_of("()") != std::string_view::npos) {
+    return std::nullopt;
+  }
+
+  const std::size_t closing_brace = structure.matching_braces[opening_brace];
+  if (closing_brace == kNoOffset) {
+    return std::nullopt;
+  }
+  std::size_t end = closing_brace + 1;
+  const std::size_t semicolon =
+      SkipWhitespaceForward(source, end, source.size());
+  if (semicolon < source.size() && source[semicolon] == ';') {
+    end = semicolon + 1;
+  }
+
+  return EntityCandidate{
+      .type = keyword->type,
+      .name = std::string(declaration.substr(name_start, name_end - name_start)),
+      .start_offset = boundary + keyword->declaration_start,
+      .opening_brace = opening_brace,
+      .closing_brace = closing_brace,
+      .end_offset = end,
+  };
+}
+
+CodeEntityInfo MakeEntity(
+    const EntityCandidate& candidate,
+    const std::vector<std::size_t>& line_starts,
+    const std::filesystem::path& file_path) {
+  return CodeEntityInfo{
+      .type = candidate.type,
+      .name = candidate.name,
+      .file_path = file_path,
+      .start_line = LineFromOffset(line_starts, candidate.start_offset),
+      .end_line = LineFromOffset(line_starts, candidate.closing_brace),
+      .body_start_line = LineFromOffset(line_starts, candidate.opening_brace),
+      .body_end_line = LineFromOffset(line_starts, candidate.closing_brace),
+      .start_offset = candidate.start_offset,
+      .end_offset = candidate.end_offset,
+      .body_start_offset = candidate.opening_brace,
+      .body_end_offset = candidate.closing_brace + 1,
+  };
+}
+
+bool HasQualifier(std::string_view name) {
+  const std::size_t operator_position = name.find("operator");
+  const std::string_view prefix = operator_position == std::string_view::npos
+                                      ? name
+                                      : name.substr(0, operator_position);
+  return prefix.find("::") != std::string_view::npos;
+}
+
+const EntityCandidate* ContainingType(
+    const std::vector<EntityCandidate>& types,
+    const EntityCandidate& function) {
+  const EntityCandidate* best = nullptr;
+  std::size_t best_size = kNoOffset;
+  for (const EntityCandidate& type : types) {
+    if (function.opening_brace <= type.opening_brace ||
+        function.opening_brace >= type.closing_brace) {
+      continue;
+    }
+    const std::size_t size = type.closing_brace - type.opening_brace;
+    if (size < best_size) {
+      best = &type;
+      best_size = size;
+    }
+  }
+  return best;
+}
+
+std::vector<EntityCandidate> FindTypes(
+    std::string_view source, const StructureInfo& structure) {
+  std::vector<EntityCandidate> types;
+  for (std::size_t offset = 0; offset < source.size(); ++offset) {
+    if (source[offset] == '{') {
+      if (auto candidate = TryFindTypeCandidate(source, structure, offset)) {
+        types.push_back(std::move(*candidate));
+      }
+    }
+  }
+  return types;
+}
+
+const EntityCandidate* TypeAt(const std::vector<EntityCandidate>& types,
+                              std::size_t opening_brace) {
+  const auto match = std::find_if(types.begin(), types.end(),
+      [opening_brace](const EntityCandidate& type) {
+        return type.opening_brace == opening_brace;
+      });
+  return match == types.end() ? nullptr : &*match;
+}
+
+}  // namespace
+
+std::vector<CodeEntityInfo> FindSourceEntities(
+    std::string_view source, const StructureInfo& structure,
+    const std::vector<std::size_t>& line_starts,
+    const std::filesystem::path& file_path) {
+  std::vector<CodeEntityInfo> entities;
+  const std::vector<EntityCandidate> types = FindTypes(source, structure);
+
+  for (std::size_t offset = 0; offset < source.size(); ++offset) {
+    if (source[offset] != '{') {
+      continue;
+    }
+    if (const EntityCandidate* type = TypeAt(types, offset)) {
+      entities.push_back(MakeEntity(*type, line_starts, file_path));
+      continue;
+    }
+
+    auto function = TryFindFunctionCandidate(source, structure, offset);
+    if (!function) {
+      continue;
+    }
+    if (!function->is_friend && !HasQualifier(function->name)) {
+      if (const EntityCandidate* type = ContainingType(types, *function)) {
+        function->name = type->name + "::" + function->name;
+      }
+    }
+    entities.push_back(MakeEntity(*function, line_starts, file_path));
+    offset = function->closing_brace;
+  }
+  return entities;
 }
 
 }  // namespace cpp_defense::source_parser_internal

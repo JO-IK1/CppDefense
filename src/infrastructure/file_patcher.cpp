@@ -4,6 +4,8 @@
 #include <iterator>
 #include <string>
 
+#include "cpp_defense/infrastructure/simple_source_parser.hpp"
+
 namespace cpp_defense {
 namespace {
 
@@ -59,16 +61,29 @@ std::expected<std::filesystem::path, FilePatcherError> FilePatcher::Patch(
   }
 
   if (entity.start_offset > entity.end_offset ||
-      entity.end_offset > source.size()) {
+      entity.end_offset > source.size() ||
+      entity.body_start_offset >= entity.body_end_offset ||
+      entity.body_end_offset > source.size() ||
+      source[entity.body_start_offset] != '{' ||
+      source[entity.body_end_offset - 1] != '}') {
     return std::unexpected(FilePatcherError(
         FilePatcherErrorType::kInvalidEntityRange,
         "Selected entity has an invalid source range",
         target_path));
   }
 
-  source.replace(entity.start_offset,
-                 entity.end_offset - entity.start_offset,
-                 replacement);
+  const SimpleSourceParser parser;
+  const auto valid_body = parser.ValidateBody(replacement, target_path);
+  if (!valid_body) {
+    return std::unexpected(FilePatcherError(
+        FilePatcherErrorType::kInvalidReplacement,
+        valid_body.error().FullMessage(), target_path));
+  }
+
+  const std::size_t content_start = entity.body_start_offset + 1;
+  const std::size_t content_size =
+      entity.body_end_offset - entity.body_start_offset - 2;
+  source.replace(content_start, content_size, replacement);
 
   input.close();
   std::ofstream output(target_path, std::ios::binary | std::ios::trunc);

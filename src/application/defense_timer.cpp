@@ -29,16 +29,22 @@ bool DefenseTimer::expired() const {
 }
 
 std::chrono::seconds DefenseTimer::remaining() const {
+  return std::chrono::duration_cast<std::chrono::seconds>(
+      remaining_duration());
+}
+
+std::chrono::milliseconds DefenseTimer::remaining_duration() const {
   if (!running_) {
-    return std::chrono::seconds::zero();
+    return std::chrono::milliseconds::zero();
   }
 
   const auto remaining_duration = deadline_ - now_function_();
   if (remaining_duration <= Clock::duration::zero()) {
-    return std::chrono::seconds::zero();
+    return std::chrono::milliseconds::zero();
   }
 
-  return std::chrono::duration_cast<std::chrono::seconds>(remaining_duration);
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      remaining_duration);
 }
 
 }  // namespace cpp_defense

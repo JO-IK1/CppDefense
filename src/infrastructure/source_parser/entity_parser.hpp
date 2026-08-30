@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "cpp_defense/core/code_entity_info.hpp"
-#include "source_parser_common.hpp"
+#include "source_analysis.hpp"
 
 namespace cpp_defense::source_parser_internal {
 

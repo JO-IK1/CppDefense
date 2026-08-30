@@ -14,7 +14,7 @@ class CliApp {
   CliApp();
   CliApp(std::istream& input, std::ostream& output, std::ostream& error_output);
   CliApp(std::istream& input, std::ostream& output, std::ostream& error_output,
-         std::filesystem::path cpp_defense_root_path);
+         std::filesystem::path runtime_root_path);
 
   CliApp(const CliApp&) = delete;
   CliApp& operator=(const CliApp&) = delete;

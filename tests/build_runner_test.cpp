@@ -94,12 +94,46 @@ bool TestUnsupported() {
                 "unsupported build system error is reported");
 }
 
+bool TestSpecialCharactersInPaths() {
+  TempDir temp;
+  const fs::path project = temp.path() / "project with spaces & $symbols";
+  WriteProject(project, "int main() { return 0; }\n");
+  BuildRunner runner;
+  const auto result = runner.Run(
+      project, temp.path() / "build with spaces & $symbols",
+      temp.path() / "logs with spaces & $symbols");
+  return Expect(result.has_value(), "special-character path can be run") &&
+         Expect(result->success(), "special-character path succeeds");
+}
+
+bool TestTimeout() {
+  TempDir temp;
+  const fs::path project = temp.path() / "project";
+  Write(project / "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(Hanging LANGUAGES NONE)\n"
+        "execute_process(COMMAND ${CMAKE_COMMAND} -E sleep 10)\n");
+  BuildRunner runner;
+  const auto started = std::chrono::steady_clock::now();
+  const auto result = runner.Run(project, temp.path() / "build",
+                                 temp.path() / "logs",
+                                 std::chrono::milliseconds(300));
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  return Expect(result.has_value(), "timeout is a normal build result") &&
+         Expect(result->configure.timed_out, "configure timeout is reported") &&
+         Expect(!result->configure.succeeded, "timed out step fails") &&
+         Expect(elapsed < std::chrono::seconds(5),
+                "timed out process is terminated promptly");
+}
+
 struct TestCase { std::string_view name; bool (*fn)(); };
-constexpr std::array<TestCase, 4> kTests{{
+constexpr std::array<TestCase, 6> kTests{{
     {"success", TestSuccess},
     {"compile-failure", TestCompileFailure},
     {"test-failure", TestTestFailure},
     {"unsupported", TestUnsupported},
+    {"special-path", TestSpecialCharactersInPaths},
+    {"timeout", TestTimeout},
 }};
 }
 

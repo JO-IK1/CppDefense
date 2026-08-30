@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <thread>
 #include <string>
 #include <string_view>
 
@@ -84,8 +85,10 @@ bool TestStart() {
   const std::string answer = Read(result->result_path);
 
   return Expect(result->selected_entity.name == "Sum", "largest function is selected") &&
-         Expect(answer.find("int Sum(int a, int b)") != std::string::npos,
-                "result file contains signature") &&
+         Expect(answer.find("int Sum(int a, int b)") == std::string::npos,
+                "result file does not expose signature") &&
+         Expect(answer.find("body contents for Sum") != std::string::npos,
+                "result file identifies the selected body") &&
          Expect(answer.find("return result") == std::string::npos,
                 "result file does not contain implementation") &&
          Expect(cached.find("return result") == std::string::npos,
@@ -105,9 +108,7 @@ bool TestRetryThenSuccess() {
   if (!Expect(start.has_value(), "session starts")) return false;
 
   Write(start->result_path,
-        "int Sum(int a, int b) {\n"
-        "  return a - b;\n"
-        "}\n");
+        "  return a - b;\n");
   const auto first_check = session.Check();
   if (!Expect(first_check.has_value(), "wrong solution is checked")) return false;
 
@@ -119,9 +120,7 @@ bool TestRetryThenSuccess() {
       session.status() == DefenseStatus::kActive;
 
   Write(start->result_path,
-        "int Sum(int a, int b) {\n"
-        "  return a + b;\n"
-        "}\n");
+        "  return a + b;\n");
   const auto second_check = session.Check();
   if (!Expect(second_check.has_value(), "corrected solution is checked")) return false;
 
@@ -167,12 +166,57 @@ bool TestNoActiveSession() {
                 "no active session error is reported");
 }
 
+bool TestFinishedElapsedTimeIsStable() {
+  Fixture fixture;
+  DefenseSession session(fixture.app_root);
+  const auto start = session.Start(fixture.project, 1,
+                                   CandidateSelectionMode::kFunctionsOnly,
+                                   5min);
+  if (!Expect(start.has_value(), "session starts")) return false;
+
+  Write(start->result_path, "return a + b;\n");
+  const auto check = session.Check();
+  if (!Expect(check && check->build_result.success(), "solution passes")) {
+    return false;
+  }
+
+  const std::string initial_report = Read(start->defense_result_path);
+  std::this_thread::sleep_for(1100ms);
+  const auto finish = session.Finish();
+  const std::string final_report = Read(start->defense_result_path);
+  return Expect(finish.has_value(), "finished session can be saved again") &&
+         Expect(initial_report == final_report,
+                "elapsed time remains fixed after completion");
+}
+
+bool TestCheckStopsAtDefenseDeadline() {
+  Fixture fixture;
+  Write(fixture.project / "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(Hanging LANGUAGES NONE)\n"
+        "execute_process(COMMAND ${CMAKE_COMMAND} -E sleep 10)\n");
+  DefenseSession session(fixture.app_root);
+  const auto start = session.Start(fixture.project, 1,
+                                   CandidateSelectionMode::kFunctionsOnly,
+                                   1s);
+  if (!Expect(start.has_value(), "session starts")) return false;
+
+  Write(start->result_path, "return a + b;\n");
+  const auto check = session.Check();
+  return Expect(check.has_value(), "timed out check returns build details") &&
+         Expect(check->build_result.timed_out(), "build timeout is retained") &&
+         Expect(check->status == DefenseStatus::kExpired,
+                "build timeout expires the defense session");
+}
+
 struct TestCase { std::string_view name; bool (*fn)(); };
-constexpr std::array<TestCase, 4> kTests{{
+constexpr std::array<TestCase, 6> kTests{{
     {"start", TestStart},
     {"retry-success", TestRetryThenSuccess},
     {"expired", TestExpired},
     {"no-active-session", TestNoActiveSession},
+    {"stable-finished-time", TestFinishedElapsedTimeIsStable},
+    {"check-timeout", TestCheckStopsAtDefenseDeadline},
 }};
 }
 

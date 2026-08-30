@@ -2,12 +2,12 @@
 
 #include <expected>
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <utility>
 
-#include "source_parser/source_entity_finder.hpp"
-#include "source_parser/source_lexer.hpp"
-#include "source_parser/source_structure.hpp"
+#include "source_parser/entity_parser.hpp"
+#include "source_parser/source_analysis.hpp"
 
 namespace cpp_defense {
 
@@ -29,6 +29,31 @@ std::expected<CodeEntities, ParseError> SimpleSourceParser::Parse(
   return source_parser_internal::FindSourceEntities(
       lex_result->sanitized_source, *structure, lex_result->line_starts,
       file_path);
+}
+
+std::expected<void, ParseError> SimpleSourceParser::ValidateBody(
+    std::string_view body, const std::filesystem::path& file_path) const {
+  std::string wrapped;
+  wrapped.reserve(body.size() + 2);
+  wrapped.push_back('{');
+  wrapped.append(body);
+  wrapped.push_back('}');
+
+  auto lex_result = source_parser_internal::LexSource(wrapped, file_path);
+  if (!lex_result) {
+    return std::unexpected(std::move(lex_result.error()));
+  }
+
+  auto structure = source_parser_internal::BuildSourceStructure(
+      lex_result->sanitized_source, lex_result->line_starts, file_path);
+  if (!structure) {
+    return std::unexpected(std::move(structure.error()));
+  }
+
+  if (structure->matching_braces.front() != wrapped.size() - 1) {
+    return std::unexpected(InvalidBodyBoundary(file_path));
+  }
+  return {};
 }
 
 }  // namespace cpp_defense

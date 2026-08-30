@@ -58,21 +58,60 @@ bool TestPatch() {
   Write(check_file, masked);
 
   const std::size_t start = masked.find("int Sum");
+  const std::size_t body_start = masked.find('{', start);
   const std::size_t end = masked.find('}', start) + 1;
   CodeEntityInfo entity{.type = CodeEntityType::kFunction,
                         .name = "Sum", .file_path = cached_file,
-                        .start_offset = start, .end_offset = end};
+                        .start_offset = start, .end_offset = end,
+                        .body_start_offset = body_start,
+                        .body_end_offset = end};
 
   FilePatcher patcher;
-  const std::string replacement = "int Sum(int a, int b) { return a + b; }";
+  const std::string replacement = " return a + b; ";
   const auto result = patcher.Patch(entity, cached, check, replacement);
 
   return Expect(result.has_value(), "patch succeeds") &&
          Expect(Read(cached_file) == masked, "cached project remains masked") &&
+         Expect(Read(check_file).find("int Sum(int a, int b) {") !=
+                    std::string::npos,
+                "original declaration is preserved") &&
          Expect(Read(check_file).find(replacement) != std::string::npos,
                 "check copy contains solution") &&
          Expect(Read(check_file).find("int x = 1;") != std::string::npos,
                 "source after entity is preserved");
+}
+
+bool TestRejectsEscapingBody() {
+  TempDir temp;
+  const fs::path cached = temp.path() / "cached";
+  const fs::path check = temp.path() / "check";
+  const fs::path cached_file = cached / "main.cpp";
+  const fs::path check_file = check / "main.cpp";
+  const std::string masked = "int Sum() {     }\nint untouched = 1;\n";
+  Write(cached_file, masked);
+  Write(check_file, masked);
+
+  const std::size_t body_start = masked.find('{');
+  const std::size_t body_end = masked.find('}') + 1;
+  const CodeEntityInfo entity{
+      .type = CodeEntityType::kFunction,
+      .name = "Sum",
+      .file_path = cached_file,
+      .start_offset = 0,
+      .end_offset = body_end,
+      .body_start_offset = body_start,
+      .body_end_offset = body_end,
+  };
+
+  FilePatcher patcher;
+  const auto result = patcher.Patch(
+      entity, cached, check, "}\nint injected = 1;\n{");
+  return Expect(!result.has_value(), "body escape is rejected") &&
+         Expect(result.error().type ==
+                    FilePatcherErrorType::kInvalidReplacement,
+                "body escape reports invalid replacement") &&
+         Expect(Read(check_file) == masked,
+                "invalid replacement does not modify check source");
 }
 
 bool TestOutsideProject() {
@@ -93,8 +132,9 @@ bool TestOutsideProject() {
 }
 
 struct TestCase { std::string_view name; bool (*fn)(); };
-constexpr std::array<TestCase, 2> kTests{{
+constexpr std::array<TestCase, 3> kTests{{
     {"patch", TestPatch},
+    {"reject-body-escape", TestRejectsEscapingBody},
     {"outside-project", TestOutsideProject},
 }};
 }

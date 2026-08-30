@@ -116,12 +116,13 @@ CommandParser
 
 The executable starts in `apps/cli/main.cpp`.
 
-The entry point creates a `CliApp`, supplies the standard input/output streams, resolves the CppDefense root path, and calls `Run()`.
+The entry point creates a `CliApp`, supplies the standard input/output streams,
+resolves the per-user runtime directory, and calls `Run()`.
 
 The intended responsibility of `main.cpp` is deliberately small:
 
 ```text
-resolve application root
+resolve per-user runtime root
         ↓
 construct CliApp
         ↓
@@ -288,6 +289,16 @@ entity recognition
 CodeEntityInfo[]
 ```
 
+The implementation is intentionally compact and has two internal modules:
+
+```text
+source_analysis  # lexical masking, line map, brace/parenthesis pairs
+entity_parser    # functions, types, qualification and exact ranges
+```
+
+`SimpleSourceParser` is the public facade and also validates submitted body
+fragments before they reach `FilePatcher`.
+
 Comments, string literals, character literals, raw string literals, and preprocessor content are masked before structural entity discovery so that syntax-like text inside those regions does not produce false entities.
 
 The v1 parser recognizes:
@@ -296,6 +307,7 @@ The v1 parser recognizes:
 - member functions and qualified methods;
 - constructors and destructors;
 - operators and friend operators;
+- constrained functions with parenthesized `requires` clauses;
 - classes;
 - structs;
 - scoped `enum class` declarations.
@@ -396,7 +408,9 @@ After an entity is selected, `ResultFile::Create()` creates:
 cache/current/result.txt
 ```
 
-The file contains the original entity signature and an empty body.
+The file contains only instructions and editable body contents. The original
+declaration and outer braces stay in the masked source and cannot be replaced
+through `result.txt`.
 
 Example source:
 
@@ -409,20 +423,13 @@ int Sum(int a, int b) {
 Generated result template:
 
 ```cpp
-int Sum(int a, int b) {
-
-}
+// Restore only the body contents for Sum.
+// The declaration and outer braces are preserved by CppDefense.
 ```
 
-For classes, structs, and scoped enums, the suffix following the closing brace is preserved. This is required to retain syntax such as the trailing semicolon:
-
-```cpp
-struct Config {
-
-};
-```
-
-The user edits only `result.txt` during the defense.
+The user replaces those instructions with body contents. `FilePatcher`
+validates that nested braces remain inside the selected entity, then replaces
+only the bytes between the original outer braces.
 
 ## 11. Cached Source Masking
 
@@ -591,6 +598,7 @@ Each stage produces a `BuildStepResult` containing:
 ```text
 whether the step was attempted
 whether it succeeded
+whether it timed out
 exit code
 captured output
 ```
@@ -601,7 +609,10 @@ If configure fails, build and tests are skipped. If build fails, tests are skipp
 
 ### 16.4 Log Capture
 
-The current dependency-free process implementation uses `std::system` and redirects standard output and standard error into files.
+The process implementation invokes CMake and CTest directly without a command
+shell. Arguments are passed separately, output is redirected to log files, and
+the complete child process group/job is terminated when the defense deadline
+is reached.
 
 Logs are stored under:
 

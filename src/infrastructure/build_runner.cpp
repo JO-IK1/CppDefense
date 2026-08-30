@@ -1,17 +1,18 @@
 #include "cpp_defense/infrastructure/build_runner.hpp"
 
-#include <cstdlib>
+#include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
+
+#include "process_runner.hpp"
 
 namespace cpp_defense {
 namespace {
-
-std::string Quote(const std::filesystem::path& path) {
-  return '"' + path.string() + '"';
-}
 
 std::expected<std::string, BuildRunnerError> ReadLog(
     const std::filesystem::path& log_path) {
@@ -38,29 +39,54 @@ std::expected<std::string, BuildRunnerError> ReadLog(
 }
 
 std::expected<BuildStepResult, BuildRunnerError> RunStep(
-    const std::string& command,
-    const std::filesystem::path& log_path) {
-  const std::string redirected =
-      command + " > " + Quote(log_path) + " 2>&1";
+    const std::string& executable,
+    const std::vector<std::string>& arguments,
+    const std::filesystem::path& log_path,
+    std::chrono::milliseconds timeout) {
+  const auto process = process_runner::Run(
+      executable, arguments, log_path, timeout);
+  if (!process) {
+    return std::unexpected(process.error());
+  }
 
-  const int exit_code = std::system(redirected.c_str());
-  if (exit_code == -1) {
+  std::string process_output;
+  std::error_code log_error;
+  const bool log_exists = std::filesystem::exists(log_path, log_error);
+  if (log_error) {
     return std::unexpected(BuildRunnerError(
-        BuildRunnerErrorType::kFailedToRunCommand,
-        "Failed to start build command"));
+        BuildRunnerErrorType::kFailedToReadLog,
+        "Failed to inspect build log", log_path));
+  }
+  if (log_exists) {
+    const auto output = ReadLog(log_path);
+    if (!output) {
+      return std::unexpected(output.error());
+    }
+    process_output = *output;
   }
 
-  const auto output = ReadLog(log_path);
-  if (!output) {
-    return std::unexpected(output.error());
-  }
-
-  return BuildStepResult{
+  BuildStepResult result{
       .attempted = true,
-      .succeeded = exit_code == 0,
-      .exit_code = exit_code,
-      .output = *output,
+      .succeeded = process->exit_code == 0 && !process->timed_out,
+      .timed_out = process->timed_out,
+      .exit_code = process->exit_code,
+      .output = std::move(process_output),
   };
+  if (result.timed_out) {
+    if (!result.output.empty() && result.output.back() != '\n') {
+      result.output.push_back('\n');
+    }
+    result.output += "CppDefense: command timed out.\n";
+  }
+  return result;
+}
+
+std::chrono::milliseconds Remaining(
+    std::chrono::steady_clock::time_point deadline) {
+  return std::max(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline - std::chrono::steady_clock::now()),
+      std::chrono::milliseconds::zero());
 }
 
 }  // namespace
@@ -68,7 +94,8 @@ std::expected<BuildStepResult, BuildRunnerError> RunStep(
 std::expected<BuildResult, BuildRunnerError> BuildRunner::Run(
     const std::filesystem::path& project_path,
     const std::filesystem::path& build_path,
-    const std::filesystem::path& logs_path) const {
+    const std::filesystem::path& logs_path,
+    std::chrono::milliseconds timeout) const {
   std::error_code error_code;
   if (!std::filesystem::is_directory(project_path, error_code) || error_code) {
     return std::unexpected(BuildRunnerError(
@@ -102,12 +129,13 @@ std::expected<BuildResult, BuildRunnerError> BuildRunner::Run(
   }
 
   BuildResult result;
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
 
   const auto configure = RunStep(
-      "cmake -S " + Quote(project_path) +
-          " -B " + Quote(build_path) +
-          " -DCMAKE_BUILD_TYPE=Release",
-      logs_path / "configure.log");
+      "cmake",
+      {"-S", project_path.string(), "-B", build_path.string(),
+       "-DCMAKE_BUILD_TYPE=Release"},
+      logs_path / "configure.log", Remaining(deadline));
   if (!configure) {
     return std::unexpected(configure.error());
   }
@@ -117,8 +145,8 @@ std::expected<BuildResult, BuildRunnerError> BuildRunner::Run(
   }
 
   const auto build = RunStep(
-      "cmake --build " + Quote(build_path) + " --config Release",
-      logs_path / "build.log");
+      "cmake", {"--build", build_path.string(), "--config", "Release"},
+      logs_path / "build.log", Remaining(deadline));
   if (!build) {
     return std::unexpected(build.error());
   }
@@ -128,9 +156,10 @@ std::expected<BuildResult, BuildRunnerError> BuildRunner::Run(
   }
 
   const auto tests = RunStep(
-      "ctest --test-dir " + Quote(build_path) +
-          " --build-config Release --output-on-failure",
-      logs_path / "tests.log");
+      "ctest",
+      {"--test-dir", build_path.string(), "--build-config", "Release",
+       "--output-on-failure"},
+      logs_path / "tests.log", Remaining(deadline));
   if (!tests) {
     return std::unexpected(tests.error());
   }

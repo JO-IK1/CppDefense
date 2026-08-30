@@ -16,6 +16,7 @@ enum class ParseErrorType {
   kUnmatchedClosingParenthesis,
   kUnmatchedOpeningBrace,
   kUnmatchedClosingBrace,
+  kInvalidBodyBoundary,
 };
 
 struct ParseError {
@@ -92,6 +93,12 @@ inline ParseError UnmatchedClosingBrace(const std::filesystem::path& path,
                                         std::size_t line, std::size_t offset) {
   return ParseError(ParseErrorType::kUnmatchedClosingBrace,
                     "Unmatched closing brace", path, line, offset);
+}
+
+inline ParseError InvalidBodyBoundary(const std::filesystem::path& path) {
+  return ParseError(ParseErrorType::kInvalidBodyBoundary,
+                    "Solution must stay inside the selected entity body",
+                    path, 1, 0);
 }
 
 }  // namespace cpp_defense

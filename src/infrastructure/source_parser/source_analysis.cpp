@@ -1,4 +1,4 @@
-#include "source_lexer.hpp"
+#include "source_analysis.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -352,6 +352,62 @@ std::expected<LexResult, ParseError> LexSource(
   }
 
   return result;
+}
+
+std::expected<StructureInfo, ParseError> BuildSourceStructure(
+    std::string_view source,
+    const std::vector<std::size_t>& line_starts,
+    const std::filesystem::path& file_path) {
+  StructureInfo structure{
+      .matching_parentheses =
+          std::vector<std::size_t>(source.size(), kNoOffset),
+      .matching_braces = std::vector<std::size_t>(source.size(), kNoOffset),
+  };
+  std::vector<std::size_t> parentheses;
+  std::vector<std::size_t> braces;
+
+  for (std::size_t offset = 0; offset < source.size(); ++offset) {
+    std::vector<std::size_t>* stack = nullptr;
+    std::vector<std::size_t>* matches = nullptr;
+    if (source[offset] == '(' || source[offset] == ')') {
+      stack = &parentheses;
+      matches = &structure.matching_parentheses;
+    } else if (source[offset] == '{' || source[offset] == '}') {
+      stack = &braces;
+      matches = &structure.matching_braces;
+    } else {
+      continue;
+    }
+
+    if (source[offset] == '(' || source[offset] == '{') {
+      stack->push_back(offset);
+      continue;
+    }
+    if (stack->empty()) {
+      return std::unexpected(source[offset] == ')'
+          ? UnmatchedClosingParenthesis(
+                file_path, LineFromOffset(line_starts, offset), offset)
+          : UnmatchedClosingBrace(
+                file_path, LineFromOffset(line_starts, offset), offset));
+    }
+
+    const std::size_t opening = stack->back();
+    stack->pop_back();
+    (*matches)[opening] = offset;
+    (*matches)[offset] = opening;
+  }
+
+  if (!parentheses.empty()) {
+    const std::size_t offset = parentheses.back();
+    return std::unexpected(UnmatchedOpeningParenthesis(
+        file_path, LineFromOffset(line_starts, offset), offset));
+  }
+  if (!braces.empty()) {
+    const std::size_t offset = braces.back();
+    return std::unexpected(UnmatchedOpeningBrace(
+        file_path, LineFromOffset(line_starts, offset), offset));
+  }
+  return structure;
 }
 
 }  // namespace cpp_defense::source_parser_internal

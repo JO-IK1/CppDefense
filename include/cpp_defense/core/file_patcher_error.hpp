@@ -12,6 +12,7 @@ enum class FilePatcherErrorType {
   kOpenFailed,
   kReadFailed,
   kInvalidEntityRange,
+  kInvalidReplacement,
   kWriteFailed,
 };
 

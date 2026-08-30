@@ -16,6 +16,9 @@ Completed:
 - solution patching;
 - CMake configure/build and CTest execution;
 - compiler/test log capture;
+- shell-free process execution and build/test timeouts;
+- per-user runtime directory with `CPP_DEFENSE_HOME` override;
+- immutable declarations and body-boundary validation;
 - final defense report;
 - example lab project;
 - multi-platform CI;

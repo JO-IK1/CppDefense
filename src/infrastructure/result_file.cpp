@@ -24,28 +24,9 @@ bool HasExpectedBodyBraces(const std::string& source,
          source[entity.body_end_offset - 1] == '}';
 }
 
-std::string BuildResultTemplate(const std::string& source,
-                                const CodeEntityInfo& entity) {
-  const std::string_view signature(
-      source.data() + entity.start_offset,
-      entity.body_start_offset - entity.start_offset);
-
-  const std::string_view suffix(
-      source.data() + entity.body_end_offset,
-      entity.end_offset - entity.body_end_offset);
-
-  std::string result;
-  result.reserve(signature.size() + suffix.size() + 6);
-
-  result.append(signature);
-  result.append("{\n\n}");
-  result.append(suffix);
-
-  if (result.empty() || result.back() != '\n') {
-    result.push_back('\n');
-  }
-
-  return result;
+std::string BuildResultTemplate(const CodeEntityInfo& entity) {
+  return "// Restore only the body contents for " + entity.name + ".\n"
+         "// The declaration and outer braces are preserved by CppDefense.\n";
 }
 
 }  // namespace
@@ -83,7 +64,7 @@ std::expected<void, ResultFileError> ResultFile::Create(
         ResultBodyBoundaryMismatch(entity.file_path));
   }
 
-  const std::string result = BuildResultTemplate(source, entity);
+  const std::string result = BuildResultTemplate(entity);
 
   errno = 0;
 

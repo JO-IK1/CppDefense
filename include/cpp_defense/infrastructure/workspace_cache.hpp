@@ -10,7 +10,7 @@ namespace cpp_defense {
 
 class WorkspaceCache {
  public:
-  explicit WorkspaceCache(std::filesystem::path cpp_defense_root_path);
+  explicit WorkspaceCache(std::filesystem::path runtime_root_path);
 
   std::expected<Workspace, CacheError> CalculateWorkspace(
       const std::filesystem::path& source_project_path) const;
@@ -19,7 +19,7 @@ class WorkspaceCache {
       const std::filesystem::path& source_project_path) const;
 
  private:
-  std::filesystem::path cpp_defense_root_path_;
+  std::filesystem::path runtime_root_path_;
 };
 
 }  // namespace cpp_defense

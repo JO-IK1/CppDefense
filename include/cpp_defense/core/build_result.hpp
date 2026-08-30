@@ -7,6 +7,7 @@ namespace cpp_defense {
 struct BuildStepResult {
   bool attempted = false;
   bool succeeded = false;
+  bool timed_out = false;
   int exit_code = -1;
   std::string output;
 };
@@ -18,6 +19,10 @@ struct BuildResult {
 
   bool success() const noexcept {
     return configure.succeeded && build.succeeded && tests.succeeded;
+  }
+
+  bool timed_out() const noexcept {
+    return configure.timed_out || build.timed_out || tests.timed_out;
   }
 };
 

@@ -20,6 +20,7 @@ class DefenseTimer {
   bool running() const noexcept;
   bool expired() const;
   std::chrono::seconds remaining() const;
+  std::chrono::milliseconds remaining_duration() const;
 
  private:
   NowFunction now_function_;

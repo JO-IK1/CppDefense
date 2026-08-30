@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <expected>
+#include <filesystem>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -10,6 +12,7 @@
 #include <vector>
 
 #include "cpp_defense/core/code_entity_info.hpp"
+#include "cpp_defense/core/parse_error.hpp"
 
 namespace cpp_defense::source_parser_internal {
 
@@ -41,52 +44,49 @@ inline bool IsSpace(char character) {
 }
 
 inline bool IsIdentifierStart(char character) {
-  const unsigned char value = static_cast<unsigned char>(character);
+  const auto value = static_cast<unsigned char>(character);
   return std::isalpha(value) != 0 || character == '_';
 }
 
 inline bool IsIdentifierCharacter(char character) {
-  const unsigned char value = static_cast<unsigned char>(character);
+  const auto value = static_cast<unsigned char>(character);
   return std::isalnum(value) != 0 || character == '_';
 }
 
 inline std::size_t LineFromOffset(
-    const std::vector<std::size_t>& line_starts,
-    std::size_t offset) {
-  const auto iterator =
-      std::upper_bound(line_starts.begin(), line_starts.end(), offset);
-
-  return static_cast<std::size_t>(
-      std::distance(line_starts.begin(), iterator));
+    const std::vector<std::size_t>& line_starts, std::size_t offset) {
+  return static_cast<std::size_t>(std::distance(
+      line_starts.begin(),
+      std::upper_bound(line_starts.begin(), line_starts.end(), offset)));
 }
 
 inline std::size_t FindPreviousBoundary(std::string_view source,
                                         std::size_t offset) {
   while (offset > 0) {
     --offset;
-
-    switch (source[offset]) {
-      case ';':
-      case '{':
-      case '}':
-        return offset + 1;
-
-      default:
-        break;
+    if (source[offset] == ';' || source[offset] == '{' ||
+        source[offset] == '}') {
+      return offset + 1;
     }
   }
-
   return 0;
 }
 
 inline std::size_t SkipWhitespaceForward(std::string_view source,
                                          std::size_t offset,
-                                         std::size_t end_offset) {
-  while (offset < end_offset && IsSpace(source[offset])) {
+                                         std::size_t end) {
+  while (offset < end && IsSpace(source[offset])) {
     ++offset;
   }
-
   return offset;
 }
+
+std::expected<LexResult, ParseError> LexSource(
+    std::string_view source, const std::filesystem::path& file_path);
+
+std::expected<StructureInfo, ParseError> BuildSourceStructure(
+    std::string_view source,
+    const std::vector<std::size_t>& line_starts,
+    const std::filesystem::path& file_path);
 
 }  // namespace cpp_defense::source_parser_internal

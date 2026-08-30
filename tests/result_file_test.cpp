@@ -83,7 +83,7 @@ CodeEntityInfo MakeEntity(const fs::path& path,
   };
 }
 
-bool TestCreatesFunctionSignatureTemplate() {
+bool TestCreatesBodyTemplate() {
   TemporaryDirectory temporary_directory;
 
   const fs::path source_path = temporary_directory.path() / "main.cpp";
@@ -116,11 +116,15 @@ bool TestCreatesFunctionSignatureTemplate() {
 
   return Expect(contents.has_value(),
                 "created result file can be read") &&
-         Expect(*contents == "int Sum(int a, int b) {\n\n}\n",
-                "result file contains the original signature and empty body");
+         Expect(*contents ==
+                    "// Restore only the body contents for Entity.\n"
+                    "// The declaration and outer braces are preserved by CppDefense.\n",
+                "result file contains only body-editing instructions") &&
+         Expect(contents->find("int Sum") == std::string::npos,
+                "result file does not expose an editable signature");
 }
 
-bool TestPreservesMultilineSignature() {
+bool TestHidesMultilineDeclaration() {
   TemporaryDirectory temporary_directory;
 
   const fs::path source_path = temporary_directory.path() / "main.cpp";
@@ -156,15 +160,11 @@ bool TestPreservesMultilineSignature() {
 
   return Expect(contents.has_value(),
                 "multiline result file can be read") &&
-         Expect(*contents ==
-                    "int Sum(\n"
-                    "    int a,\n"
-                    "    int b)\n"
-                    "{\n\n}\n",
-                "multiline signature is preserved exactly");
+         Expect(contents->find("int Sum") == std::string::npos,
+                "multiline signature is not copied into result file");
 }
 
-bool TestPreservesTypeSemicolon() {
+bool TestHidesTypeDeclaration() {
   TemporaryDirectory temporary_directory;
 
   const fs::path source_path = temporary_directory.path() / "types.hpp";
@@ -198,8 +198,8 @@ bool TestPreservesTypeSemicolon() {
 
   return Expect(contents.has_value(),
                 "struct result file can be read") &&
-         Expect(*contents == "struct Config {\n\n};\n",
-                "type template preserves its trailing semicolon");
+         Expect(contents->find("struct Config") == std::string::npos,
+                "type declaration is not editable through result file");
 }
 
 bool TestRejectsInvalidRange() {
@@ -245,9 +245,9 @@ struct TestCase {
 };
 
 constexpr std::array<TestCase, 5> kTestCases{{
-    {"function-signature", TestCreatesFunctionSignatureTemplate},
-    {"multiline-signature", TestPreservesMultilineSignature},
-    {"type-semicolon", TestPreservesTypeSemicolon},
+    {"body-template", TestCreatesBodyTemplate},
+    {"multiline-declaration-hidden", TestHidesMultilineDeclaration},
+    {"type-declaration-hidden", TestHidesTypeDeclaration},
     {"reject-invalid-range", TestRejectsInvalidRange},
     {"read-missing-file", TestReadRejectsMissingFile},
 }};

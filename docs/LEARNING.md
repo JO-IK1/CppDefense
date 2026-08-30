@@ -50,8 +50,8 @@ topics rather than only as a utility.
 ## Files and processes
 
 - **`std::ifstream` / `std::ofstream`** — byte-exact source/result/log handling.
-- **`std::system`** — dependency-free first implementation of CMake/CTest
-  process execution.
+- **Native process APIs** — shell-free CMake/CTest execution, exit-code
+  collection, process-tree termination and deadlines.
 - **Exit codes** — configure, build and test outcomes are stored independently.
 
 ## Architecture and OOP

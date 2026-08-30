@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <expected>
 #include <filesystem>
 
@@ -13,7 +14,8 @@ class BuildRunner {
   std::expected<BuildResult, BuildRunnerError> Run(
       const std::filesystem::path& project_path,
       const std::filesystem::path& build_path,
-      const std::filesystem::path& logs_path) const;
+      const std::filesystem::path& logs_path,
+      std::chrono::milliseconds timeout = std::chrono::minutes(30)) const;
 };
 
 }  // namespace cpp_defense
