@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "kind": "group",
+  "group_code": "iu7-21b",
+  "items": [
+    {
+      "lab_code": "lab-01",
+      "student": {
+        "github_login": "ivanov-student"
+      },
+      "project_path": "students/ivanov/lab-01"
+    },
+    {
+      "lab_code": "lab-02",
+      "student": {
+        "github_login": "petrova-student"
+      },
+      "project_path": "students/petrova/lab-02"
+    }
+  ]
+}

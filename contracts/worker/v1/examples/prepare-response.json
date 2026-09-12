@@ -1,0 +1,39 @@
+{
+  "protocol_version": "1.0",
+  "request_id": "0199a123-4567-7abc-8def-0123456789ab",
+  "session_id": "0199a123-4568-7abc-8def-0123456789ab",
+  "command": "prepare_defense",
+  "status": "ok",
+  "result": {
+    "candidates": [
+      {
+        "function_name": "calculateStatistics",
+        "file_path": "src/statistics.cpp",
+        "signature": "Statistics calculateStatistics(const Data& data)",
+        "signature_begin": 128,
+        "body_begin": 184,
+        "body_end": 982,
+        "begin_line": 8,
+        "end_line": 46,
+        "line_count": 39,
+        "source_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "original_body_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+      }
+    ],
+    "selected_index": 0,
+    "selected_function": {
+      "function_name": "calculateStatistics",
+      "file_path": "src/statistics.cpp",
+      "signature": "Statistics calculateStatistics(const Data& data)",
+      "signature_begin": 128,
+      "body_begin": 184,
+      "body_end": 982,
+      "begin_line": 8,
+      "end_line": 46,
+      "line_count": 39,
+      "source_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "original_body_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    },
+    "warnings": []
+  }
+}

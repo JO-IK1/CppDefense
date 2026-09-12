@@ -95,7 +95,10 @@ bool TestEofFinalizesSession() {
   std::string project_argument = project.string();
   char* arguments[] = {program.data(), project_argument.data()};
   const int exit_code = app.Run(2, arguments);
-  const fs::path report = runtime / "cache/current/defense_result.txt";
+  fs::path report;
+  for (const auto& entry : fs::directory_iterator(runtime / "cache")) {
+    if (entry.is_directory()) report = entry.path() / "defense_result.txt";
+  }
   return Expect(exit_code == 0, "EOF exits cleanly") &&
          Expect(fs::is_regular_file(report), "EOF saves final report") &&
          Expect(Read(report).find("Result: failed") != std::string::npos,

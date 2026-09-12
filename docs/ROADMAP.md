@@ -43,3 +43,17 @@ superseded by the isolated-copy model.
 After the console version is stable, the application layer can be reused by a
 web/API frontend. Core selection and defense rules should remain independent
 from the UI.
+
+## v2.0 alpha foundation
+
+Implemented in the Stage 1 working tree:
+
+- separate `cpp-defense-core`, infrastructure, CLI UI and worker targets;
+- preserved console workflow with UUID-scoped cache sessions;
+- headless `cpp-defense-worker` with protocol 1.0;
+- `analyze_project`, `prepare_defense` and `materialize_attempt` commands;
+- deterministic top-N selection from an unsigned 64-bit seed;
+- persisted preparation state and immutable input-project checks;
+- workspace-relative paths, symlink/hard-link rejection and temporary-tree cleanup;
+- C++, Python and Go worker contract tests;
+- Linux AddressSanitizer and UndefinedBehaviorSanitizer CI job.

@@ -1,5 +1,6 @@
-#include "cpp_defense/application/candidate_picker.hpp"
+#include "cpp_defense/core/candidate_picker.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -24,7 +25,7 @@ bool IsAllowedCandidate(const CodeEntityInfo& entity,
 CandidatePicker::CandidatePicker()
     : generator_(std::random_device{}()) {}
 
-CandidatePicker::CandidatePicker(std::uint32_t seed)
+CandidatePicker::CandidatePicker(std::uint64_t seed)
     : generator_(seed) {}
 
 std::expected<CandidateSelection, PickerError> CandidatePicker::Pick(
@@ -37,7 +38,9 @@ std::expected<CandidateSelection, PickerError> CandidatePicker::Pick(
 
   CandidateQueue candidates(candidate_count);
 
-  for (const CodeEntityInfo& entity : entities) {
+  auto ordered = entities;
+  std::sort(ordered.begin(), ordered.end(), CandidatePriorityCompare{});
+  for (const CodeEntityInfo& entity : ordered) {
     if (!IsAllowedCandidate(entity, mode)) {
       continue;
     }
@@ -49,9 +52,11 @@ std::expected<CandidateSelection, PickerError> CandidatePicker::Pick(
     return std::unexpected(NoSuitableCandidates());
   }
 
-  std::uniform_int_distribution<std::size_t> distribution(
-      0, candidates.size() - 1);
-  const std::size_t selected_index = distribution(generator_);
+  const std::uint64_t bound = candidates.size();
+  const std::uint64_t threshold = (std::uint64_t{0} - bound) % bound;
+  std::uint64_t value;
+  do { value = generator_(); } while (value < threshold);
+  const std::size_t selected_index = static_cast<std::size_t>(value % bound);
 
   return CandidateSelection{
       .candidates = std::move(candidates),

@@ -124,7 +124,8 @@ bool TestRetryThenSuccess() {
   const auto second_check = session.Check();
   if (!Expect(second_check.has_value(), "corrected solution is checked")) return false;
 
-  const fs::path check_root = fixture.app_root / "cache/current/check";
+  const fs::path check_root =
+      start->cached_project_path.parent_path().parent_path() / "check";
   const std::string report = Read(start->defense_result_path);
   return Expect(first_failed, "failed tests keep session active") &&
          Expect(second_check->build_result.success(), "correct solution passes") &&

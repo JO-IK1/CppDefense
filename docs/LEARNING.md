@@ -37,8 +37,9 @@ topics rather than only as a utility.
 
 ## Randomness
 
-- **`std::mt19937`** — random defense target selection.
-- **`std::uniform_int_distribution`** — unbiased queue-index selection.
+- **`std::mt19937_64`** — random or reproducible defense target selection.
+- **Rejection sampling** — unbiased queue-index selection with stable behavior
+  across standard-library implementations.
 - deterministic seeds are supported for tests.
 
 ## Time and state

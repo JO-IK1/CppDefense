@@ -157,7 +157,7 @@ Set `CPP_DEFENSE_HOME` to use an explicit directory.
 For a project named `labwork_simple`, the active session looks like:
 
 ```text
-cache/current/
+cache/<session-id>/
 ├── project/
 │   └── labwork_simple/       # masked session copy
 ├── logs/
@@ -169,7 +169,7 @@ cache/current/
 └── defense_result.txt        # final report
 ```
 
-During `check`, `cache/current/check/` is created and removed automatically.
+During `check`, `cache/<session-id>/check/` is created and removed automatically.
 
 ## Result report
 

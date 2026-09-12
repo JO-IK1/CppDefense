@@ -247,12 +247,12 @@ WorkspaceCache
 ProjectScanner
 ```
 
-`WorkspaceCache` validates the selected source project, creates a new isolated session directory, removes an older session if necessary, and recursively copies the source project into the CppDefense cache.
+`WorkspaceCache` validates the selected source project, creates a new isolated UUID session directory, removes only an incomplete directory with that same session ID if necessary, and recursively copies the source project into the CppDefense cache.
 
 For a project named `labwork_simple`, the active cached project is located under:
 
 ```text
-cache/current/project/labwork_simple/
+cache/<session-id>/project/labwork_simple/
 ```
 
 All subsequent source analysis and masking operations use this cached copy rather than the original project.
@@ -394,18 +394,18 @@ The queue is implemented using standard heap algorithms over an internal `std::v
 Once the top-N candidates are retained, `CandidatePicker` chooses one index using:
 
 ```text
-std::mt19937
-std::uniform_int_distribution
+std::mt19937_64
+specified rejection sampling
 ```
 
-The default constructor seeds the generator from `std::random_device`. A deterministic seed can be supplied for tests.
+The default constructor seeds the generator from `std::random_device`. The worker supplies an unsigned 64-bit seed. Candidate ordering uses body size, relative path and byte offset, so the same project, configuration and seed produce the same selection across repeated calls.
 
 ## 10. Result File Generation
 
 After an entity is selected, `ResultFile::Create()` creates:
 
 ```text
-cache/current/result.txt
+cache/<session-id>/result.txt
 ```
 
 The file contains only instructions and editable body contents. The original
@@ -518,7 +518,7 @@ update session state and report
 `CheckWorkspace` creates an isolated temporary directory under:
 
 ```text
-cache/current/check/
+cache/<session-id>/check/
 ```
 
 The masked cached project is copied into that directory before every check.
@@ -617,9 +617,9 @@ is reached.
 Logs are stored under:
 
 ```text
-cache/current/logs/configure.log
-cache/current/logs/build.log
-cache/current/logs/tests.log
+cache/<session-id>/logs/configure.log
+cache/<session-id>/logs/build.log
+cache/<session-id>/logs/tests.log
 ```
 
 The files are then read back into `BuildStepResult::output` for CLI reporting and final result generation.
@@ -662,7 +662,7 @@ If the timer expires during build execution, the session becomes `kExpired` even
 When a defense reaches a terminal state, `DefenseResultWriter` creates:
 
 ```text
-cache/current/defense_result.txt
+cache/<session-id>/defense_result.txt
 ```
 
 `DefenseResult` contains:
@@ -691,7 +691,7 @@ If the user explicitly finishes an active defense before success, the session is
 For a project named `labwork_simple`, the active session is organized as follows:
 
 ```text
-cache/current/
+cache/<session-id>/
 ├── project/
 │   └── labwork_simple/       # persistent masked copy
 ├── logs/
@@ -706,7 +706,7 @@ cache/current/
 During a check, the following temporary structure is added:
 
 ```text
-cache/current/check/
+cache/<session-id>/check/
 ├── project/
 │   └── labwork_simple/       # patched temporary copy
 └── build/                    # temporary CMake build directory
@@ -768,7 +768,7 @@ Filesystem, parsing, selection, build, and session operations use explicit succe
 
 ### 22.6 Random Number Generation
 
-Candidate selection uses `std::mt19937` and `std::uniform_int_distribution`, with deterministic seeding available for tests.
+Candidate selection uses `std::mt19937_64` and specified rejection sampling, with deterministic unsigned 64-bit seeding for worker calls and tests.
 
 ### 22.7 `std::filesystem`
 
@@ -861,3 +861,45 @@ cached project    → permanently masked during the session
 result.txt        → user submission
 check project     → disposable validation copy
 ```
+
+## 25. CppDefense 2.0 Core and Headless Worker
+
+The Stage 1 build separates four link targets:
+
+```text
+cpp-defense-core
+   ├── cpp-defense-infrastructure ── cpp-defense-ui ── cpp-defense CLI
+   └── cpp-defense-infrastructure ── worker adapter ── cpp-defense-worker
+```
+
+`cpp-defense-core` owns parsing, candidate ordering and selection, timer logic,
+and content hashing. It does not depend on the CLI or JSON. Compatibility
+headers preserve the v1 include paths while the CLI and worker use the same
+implementations.
+
+`cpp-defense-worker` processes one UTF-8 JSON request from stdin, writes one
+JSON response to stdout, and exits. Its protocol is versioned independently in
+`contracts/worker/v1`. The commands are:
+
+- `analyze_project` — return supported function candidates;
+- `prepare_defense` — calculate deterministic top-N candidates and persist
+  the selected function for the supplied seed;
+- `materialize_attempt` — copy the immutable input project and replace only
+  the selected function body.
+
+Runner creates the session root before invocation:
+
+```text
+<runner-workspace>/
+└── <session-id>/
+    ├── project/                 # immutable input for worker calls
+    ├── defense-state.json       # persisted preparation result
+    └── attempts/
+        └── <attempt>/           # materialized output
+```
+
+All request paths are relative to that session. The worker rejects parent
+traversal, absolute paths, backslashes, symlinks, hard links and special files.
+A per-session lock prevents concurrent mutation. Staging directories are
+removed after errors; successful output is committed by rename. The worker
+does not configure, build, test or execute the student project.

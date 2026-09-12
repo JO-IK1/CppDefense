@@ -1,0 +1,1445 @@
+openapi: 3.1.0
+info:
+  title: CppDefense API
+  version: 1.0.0
+  summary: Public application and private runner contracts for CppDefense 2.0
+  license:
+    name: Proprietary source-available
+servers:
+  - url: https://cppdefense.example
+    description: Placeholder production origin
+tags:
+  - name: Health
+  - name: Auth
+  - name: Profile
+  - name: Groups
+  - name: Imports
+  - name: Defenses
+  - name: History
+  - name: Administration
+  - name: Runner
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      responses:
+        '204':
+          description: Process is alive
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      responses:
+        '204':
+          description: Required application dependencies are ready
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/auth/github/start:
+    get:
+      tags: [Auth]
+      operationId: startGithubLogin
+      parameters:
+        - $ref: '#/components/parameters/ReturnTo'
+      responses:
+        '302':
+          description: Redirect to GitHub OAuth authorization endpoint
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/auth/github/callback:
+    get:
+      tags: [Auth]
+      operationId: completeGithubLogin
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 32
+            maxLength: 512
+      responses:
+        '302':
+          description: Login completed; redirect to application or pending screen
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/auth/telegram/start:
+    get:
+      tags: [Auth]
+      operationId: startTelegramLogin
+      parameters:
+        - $ref: '#/components/parameters/ReturnTo'
+      responses:
+        '302':
+          description: Redirect to Telegram OIDC authorization endpoint
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+  /api/v1/auth/telegram/callback:
+    get:
+      tags: [Auth]
+      operationId: completeTelegramLogin
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 4096
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 32
+            maxLength: 512
+      responses:
+        '302':
+          description: Login completed; redirect to application or pending screen
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '204':
+          description: Session revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/me:
+    get:
+      tags: [Profile]
+      operationId: getCurrentUser
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/me/identities/{provider}:
+    post:
+      tags: [Profile]
+      operationId: startIdentityLink
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdentityProvider'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Full provider authorization flow started
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [authorization_url]
+                properties:
+                  authorization_url:
+                    type: string
+                    format: uri
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Profile]
+      operationId: unlinkIdentity
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdentityProvider'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Identity unlinked; last identity cannot be removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/groups:
+    get:
+      tags: [Groups]
+      operationId: listGroups
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Groups visible to current user
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Group'
+                  next_cursor:
+                    type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Groups]
+      operationId: createGroup
+      x-roles: [admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, name]
+              properties:
+                code:
+                  $ref: '#/components/schemas/Code'
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                is_demo:
+                  type: boolean
+                  default: false
+      responses:
+        '201':
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/groups/{group_id}/labs:
+    get:
+      tags: [Groups]
+      operationId: listGroupLabs
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Labs visible to current user
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Lab'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Groups]
+      operationId: createLab
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLabRequest'
+      responses:
+        '201':
+          description: Lab created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lab'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/imports:
+    post:
+      tags: [Imports]
+      operationId: createImport
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [group_id, kind, archive]
+              properties:
+                group_id:
+                  $ref: '#/components/schemas/Uuid'
+                kind:
+                  enum: [group, lab]
+                archive:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Upload accepted for validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Import'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/imports/{import_id}:
+    get:
+      tags: [Imports]
+      operationId: getImport
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ImportId'
+      responses:
+        '200':
+          description: Import and preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Import'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/imports/{import_id}/review:
+    post:
+      tags: [Imports]
+      operationId: reviewImport
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/ImportId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, archive_sha256, checklist]
+              properties:
+                decision:
+                  enum: [approve, reject]
+                archive_sha256:
+                  $ref: '#/components/schemas/Sha256'
+                checklist:
+                  $ref: '#/components/schemas/ReviewChecklist'
+                reason:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Review stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Import'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/imports/{import_id}/apply:
+    post:
+      tags: [Imports]
+      operationId: applyImport
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/ImportId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Approved import application started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Import'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/defenses:
+    post:
+      tags: [Defenses]
+      operationId: createDefense
+      x-roles: [student]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [submission_version_id]
+              properties:
+                submission_version_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '202':
+          description: Defense created and preparation queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Defense'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/defenses/{defense_id}:
+    get:
+      tags: [Defenses]
+      operationId: getDefense
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+      responses:
+        '200':
+          description: Defense visible to current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Defense'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/defenses/{defense_id}/draft:
+    put:
+      tags: [Defenses]
+      operationId: saveDefenseDraft
+      x-roles: [student]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^"[0-9]+"$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [answer]
+              properties:
+                answer:
+                  type: string
+                  maxLength: 1048576
+      responses:
+        '200':
+          description: Draft saved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version, saved_at]
+                properties:
+                  version:
+                    type: integer
+                    minimum: 1
+                  saved_at:
+                    type: string
+                    format: date-time
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/defenses/{defense_id}/attempts:
+    post:
+      tags: [Defenses]
+      operationId: createCheckAttempt
+      x-roles: [student]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [answer]
+              properties:
+                answer:
+                  type: string
+                  maxLength: 1048576
+      responses:
+        '202':
+          description: Attempt and job created atomically
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckAttempt'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/attempts/{attempt_id}:
+    get:
+      tags: [Defenses]
+      operationId: getCheckAttempt
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+      responses:
+        '200':
+          description: Attempt visible under object policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckAttempt'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/history/attempts:
+    get:
+      tags: [History]
+      operationId: listAttemptHistory
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: group_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: student_record_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: lab_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: outcome
+          in: query
+          schema:
+            $ref: '#/components/schemas/AttemptOutcome'
+      responses:
+        '200':
+          description: Scoped attempt history
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CheckAttempt'
+                  next_cursor:
+                    type: [string, 'null']
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/pending-links/{user_id}/approve:
+    post:
+      tags: [Administration]
+      operationId: approvePendingStudentLink
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [student_record_id]
+              properties:
+                student_record_id:
+                  $ref: '#/components/schemas/Uuid'
+                reason:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '200':
+          description: User activated and linked atomically
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/pending-links/{user_id}/reject:
+    post:
+      tags: [Administration]
+      operationId: rejectPendingStudentLink
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Pending association rejected and audited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/view-as-role:
+    put:
+      tags: [Administration]
+      operationId: setAdminViewAsRole
+      x-roles: [admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ViewAsRoleRequest'
+      responses:
+        '200':
+          description: Session presentation mode changed; real role remains admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Administration]
+      operationId: clearAdminViewAsRole
+      x-roles: [admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Session presentation mode reset to admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/runner/jobs/lease:
+    post:
+      tags: [Runner]
+      operationId: leaseJob
+      security:
+        - runnerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [runner_id, capacity]
+              properties:
+                runner_id:
+                  $ref: '#/components/schemas/Uuid'
+                capacity:
+                  type: integer
+                  minimum: 1
+                  maximum: 64
+      responses:
+        '200':
+          description: One job leased
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobLease'
+        '204':
+          description: No eligible job
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/runner/jobs/{job_id}/heartbeat:
+    post:
+      tags: [Runner]
+      operationId: heartbeatJob
+      security:
+        - runnerBearer: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/LeaseToken'
+      responses:
+        '204':
+          description: Lease extended
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/runner/jobs/{job_id}/complete:
+    post:
+      tags: [Runner]
+      operationId: completeJob
+      security:
+        - runnerBearer: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/LeaseToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteJobRequest'
+      responses:
+        '200':
+          description: Current lease result accepted idempotently
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckAttempt'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: cppdefense_session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+    runnerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-service-token
+  parameters:
+    ReturnTo:
+      name: return_to
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 2048
+        pattern: '^/(?!/).*$'
+    IdentityProvider:
+      name: provider
+      in: path
+      required: true
+      schema:
+        enum: [github, telegram]
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 1024
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    ImportId:
+      name: import_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    DefenseId:
+      name: defense_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    AttemptId:
+      name: attempt_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    LeaseToken:
+      name: X-Lease-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{43}$'
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Authentication required or invalid
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: Authenticated principal is not allowed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Resource not found or hidden by object policy
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: State, version or idempotency conflict
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    PayloadTooLarge:
+      description: Upload exceeds configured limit
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UnprocessableEntity:
+      description: Syntactically valid request violates domain validation
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ServiceUnavailable:
+      description: Required dependency is unavailable
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    Sha256:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    Code:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, status, identities, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        status:
+          enum: [pending, active, rejected, blocked]
+        role:
+          type: [string, 'null']
+          enum: [student, teacher, admin, null]
+        view_as:
+          oneOf:
+            - $ref: '#/components/schemas/ViewAsRole'
+            - type: 'null'
+          description: Presentation mode present only for a real admin; never grants authorization
+        display_name:
+          type: [string, 'null']
+        identities:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [provider, subject, verified_at]
+            properties:
+              provider:
+                enum: [github, telegram]
+              subject:
+                type: string
+              login:
+                type: [string, 'null']
+              verified_at:
+                type: string
+                format: date-time
+        created_at:
+          type: string
+          format: date-time
+    ViewAsRoleRequest:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [role]
+          properties:
+            role:
+              const: admin
+        - type: object
+          additionalProperties: false
+          required: [role, group_id]
+          properties:
+            role:
+              const: teacher
+            group_id:
+              $ref: '#/components/schemas/Uuid'
+        - type: object
+          additionalProperties: false
+          required: [role, student_record_id]
+          properties:
+            role:
+              const: student
+            student_record_id:
+              $ref: '#/components/schemas/Uuid'
+    ViewAsRole:
+      type: object
+      additionalProperties: false
+      required: [role, read_only]
+      properties:
+        role:
+          enum: [admin, teacher, student]
+        group_id:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        student_record_id:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        read_only:
+          type: boolean
+          description: False is permitted only for a target inside a demo group
+    Group:
+      type: object
+      additionalProperties: false
+      required: [id, code, name, status, is_demo]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        code:
+          $ref: '#/components/schemas/Code'
+        name:
+          type: string
+        status:
+          enum: [active, archived]
+        is_demo:
+          type: boolean
+    CreateLabRequest:
+      type: object
+      additionalProperties: false
+      required: [code, name]
+      properties:
+        code:
+          $ref: '#/components/schemas/Code'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 20000
+        time_limit_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 600
+        top_n:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 5
+    Lab:
+      type: object
+      additionalProperties: false
+      required: [id, group_id, code, name, status, time_limit_seconds, top_n]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        group_id:
+          $ref: '#/components/schemas/Uuid'
+        code:
+          $ref: '#/components/schemas/Code'
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          enum: [active, archived]
+        time_limit_seconds:
+          type: integer
+          minimum: 60
+        top_n:
+          type: integer
+          minimum: 1
+          maximum: 50
+    ReviewChecklist:
+      type: object
+      additionalProperties: false
+      required: [group_correct, students_correct, labs_correct, sizes_expected, no_errors]
+      properties:
+        group_correct:
+          const: true
+        students_correct:
+          const: true
+        labs_correct:
+          const: true
+        sizes_expected:
+          const: true
+        no_errors:
+          const: true
+    ImportState:
+      enum: [receiving, stored, validating, review_pending, approved, applying, completed, rejected, failed, cancelled]
+    Import:
+      type: object
+      additionalProperties: false
+      required: [id, group_id, kind, state, original_sha256, created_at, items]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        group_id:
+          $ref: '#/components/schemas/Uuid'
+        kind:
+          enum: [group, lab]
+        state:
+          $ref: '#/components/schemas/ImportState'
+        original_sha256:
+          $ref: '#/components/schemas/Sha256'
+        reviewed_by:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        reviewed_at:
+          type: [string, 'null']
+          format: date-time
+        rejection_reason:
+          type: [string, 'null']
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportItem'
+        created_at:
+          type: string
+          format: date-time
+    ImportItem:
+      type: object
+      additionalProperties: false
+      required: [id, github_login, lab_code, project_path, action, warnings, errors]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        github_login:
+          type: string
+        lab_code:
+          $ref: '#/components/schemas/Code'
+        project_path:
+          type: string
+        action:
+          enum: [create_student_and_version, create_version, skip_duplicate, conflict]
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationMessage'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationMessage'
+    ValidationMessage:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{1,63}$'
+        message:
+          type: string
+        path:
+          type: [string, 'null']
+    DefenseState:
+      enum: [ready, preparing, active, passed, failed, expired, cancelled, error]
+    Defense:
+      type: object
+      additionalProperties: false
+      required: [id, session_id, submission_version_id, state, time_limit_seconds, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        session_id:
+          $ref: '#/components/schemas/Uuid'
+        submission_version_id:
+          $ref: '#/components/schemas/Uuid'
+        state:
+          $ref: '#/components/schemas/DefenseState'
+        time_limit_seconds:
+          type: integer
+          minimum: 1
+        deadline_at:
+          type: [string, 'null']
+          format: date-time
+        selected_function:
+          oneOf:
+            - $ref: '#/components/schemas/SelectedFunction'
+            - type: 'null'
+        created_at:
+          type: string
+          format: date-time
+    SelectedFunction:
+      type: object
+      additionalProperties: false
+      required: [function_name, file_path, signature, begin_line, end_line]
+      properties:
+        function_name:
+          type: string
+        file_path:
+          type: string
+        signature:
+          type: string
+        begin_line:
+          type: integer
+          minimum: 1
+        end_line:
+          type: integer
+          minimum: 1
+    AttemptOutcome:
+      enum: [pending, passed, failed, error]
+    StageResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          enum: [not_run, passed, failed, timed_out, error]
+        exit_code:
+          type: [integer, 'null']
+        duration_ms:
+          type: [integer, 'null']
+          minimum: 0
+    CheckAttempt:
+      type: object
+      additionalProperties: false
+      required: [id, defense_id, attempt_no, outcome, accepted_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        defense_id:
+          $ref: '#/components/schemas/Uuid'
+        attempt_no:
+          type: integer
+          minimum: 1
+        outcome:
+          $ref: '#/components/schemas/AttemptOutcome'
+        configure:
+          $ref: '#/components/schemas/StageResult'
+        build:
+          $ref: '#/components/schemas/StageResult'
+        ctest:
+          $ref: '#/components/schemas/StageResult'
+        safe_log_url:
+          type: [string, 'null']
+          format: uri
+        accepted_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+    JobLease:
+      type: object
+      additionalProperties: false
+      required: [job_id, job_kind, defense_id, lease_token, lease_expires_at, timeout_seconds, input]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/Uuid'
+        job_kind:
+          enum: [prepare_defense, check_attempt]
+        defense_id:
+          $ref: '#/components/schemas/Uuid'
+        attempt_id:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        lease_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        lease_expires_at:
+          type: string
+          format: date-time
+        timeout_seconds:
+          type: integer
+          minimum: 1
+        input:
+          oneOf:
+            - $ref: '#/components/schemas/PrepareJobInput'
+            - $ref: '#/components/schemas/CheckJobInput'
+    PrepareJobInput:
+      type: object
+      additionalProperties: false
+      required: [kind, download_url, session_id, top_n, seed, worker_protocol]
+      properties:
+        kind:
+          const: prepare_defense
+        download_url:
+          type: string
+          format: uri
+        session_id:
+          $ref: '#/components/schemas/Uuid'
+        top_n:
+          type: integer
+          minimum: 1
+          maximum: 50
+        seed:
+          type: string
+          pattern: '^(0|[1-9][0-9]{0,19})$'
+        worker_protocol:
+          const: '1.0'
+    CheckJobInput:
+      type: object
+      additionalProperties: false
+      required: [kind, download_url, session_id, answer, selected_function, worker_protocol]
+      properties:
+        kind:
+          const: check_attempt
+        download_url:
+          type: string
+          format: uri
+        session_id:
+          $ref: '#/components/schemas/Uuid'
+        answer:
+          type: string
+          maxLength: 1048576
+        selected_function:
+          $ref: '#/components/schemas/WorkerSelectedFunction'
+        worker_protocol:
+          const: '1.0'
+    WorkerSelectedFunction:
+      type: object
+      additionalProperties: false
+      required: [function_name, file_path, signature_begin, body_begin, body_end, source_sha256]
+      properties:
+        function_name:
+          type: string
+        file_path:
+          type: string
+        signature_begin:
+          type: integer
+          minimum: 0
+        body_begin:
+          type: integer
+          minimum: 0
+        body_end:
+          type: integer
+          minimum: 1
+        source_sha256:
+          $ref: '#/components/schemas/Sha256'
+    CompleteJobRequest:
+      type: object
+      additionalProperties: false
+      required: [job_kind, technical_state, worker_version, image_digest]
+      properties:
+        job_kind:
+          enum: [prepare_defense, check_attempt]
+        technical_state:
+          enum: [completed, timed_out, retryable_error, fatal_error]
+        outcome:
+          oneOf:
+            - $ref: '#/components/schemas/AttemptOutcome'
+            - type: 'null'
+        prepared_defense:
+          type: [object, 'null']
+          additionalProperties: true
+        configure:
+          $ref: '#/components/schemas/StageResult'
+        build:
+          $ref: '#/components/schemas/StageResult'
+        ctest:
+          $ref: '#/components/schemas/StageResult'
+        safe_log_upload_id:
+          type: [string, 'null']
+        worker_version:
+          type: string
+          minLength: 1
+        image_digest:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+        error_code:
+          type: [string, 'null']
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, request_id]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{1,63}$'
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        request_id:
+          $ref: '#/components/schemas/Uuid'
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, message]
+            properties:
+              field:
+                type: string
+              code:
+                type: string
+              message:
+                type: string

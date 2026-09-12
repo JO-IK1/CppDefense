@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "lab",
+  "group_code": "iu7-21b",
+  "lab_code": "lab-03",
+  "student": {
+    "github_login": "ivanov-student"
+  },
+  "project_path": "../outside"
+}

@@ -64,13 +64,13 @@ bool TestPrepareWorkspace() {
   TemporaryDirectory temporary_directory;
   const fs::path root = temporary_directory.path() / "CppDefense";
   const fs::path source = temporary_directory.path() / "sample-project";
-  fs::create_directories(root / "cache/current");
+  fs::create_directories(root / "cache/01900000-0000-7000-8000-000000000001");
   fs::create_directories(source / "empty-directory");
-  WriteFile(root / "cache/current/stale.txt", "stale");
+  WriteFile(root / "cache/01900000-0000-7000-8000-000000000001/stale.txt", "stale");
   WriteFile(source / "src/main.cpp", "int main() { return 0; }");
   WriteFile(source / "README.md", "sample");
 
-  WorkspaceCache cache(root);
+  WorkspaceCache cache(root, "01900000-0000-7000-8000-000000000001");
   const auto result = cache.PrepareWorkspace(source);
 
   bool passed = Expect(result.has_value(), "workspace preparation succeeds");
@@ -106,7 +106,7 @@ bool TestPrepareFreshWorkspace() {
   fs::create_directories(source);
   WriteFile(source / "main.cpp", "int main() { return 0; }");
 
-  WorkspaceCache cache(root);
+  WorkspaceCache cache(root, "01900000-0000-7000-8000-000000000001");
   const auto result = cache.PrepareWorkspace(source);
 
   return Expect(result && fs::exists(result->cached_project_path / "main.cpp"),
@@ -119,7 +119,7 @@ bool TestRejectsSourceInsideCache() {
   const fs::path source = root / "cache/source-project";
   fs::create_directories(source);
 
-  WorkspaceCache cache(root);
+  WorkspaceCache cache(root, "01900000-0000-7000-8000-000000000001");
   const auto result = cache.PrepareWorkspace(source);
 
   return Expect(!result &&
@@ -134,7 +134,7 @@ bool TestRejectsCacheInsideSource() {
   const fs::path root = source / "CppDefense";
   fs::create_directories(root);
 
-  WorkspaceCache cache(root);
+  WorkspaceCache cache(root, "01900000-0000-7000-8000-000000000001");
   const auto result = cache.PrepareWorkspace(source);
 
   return Expect(!result &&
@@ -148,9 +148,9 @@ bool TestRejectsSourceSymlinkBeforeCleanup() {
   const fs::path root = temporary_directory.path() / "CppDefense";
   const fs::path source = temporary_directory.path() / "source-project";
   const fs::path target = temporary_directory.path() / "outside.txt";
-  fs::create_directories(root / "cache/current");
+  fs::create_directories(root / "cache/01900000-0000-7000-8000-000000000001");
   fs::create_directories(source);
-  WriteFile(root / "cache/current/stale.txt", "must remain");
+  WriteFile(root / "cache/01900000-0000-7000-8000-000000000001/stale.txt", "must remain");
   WriteFile(target, "outside");
 
   std::error_code error_code;
@@ -161,13 +161,13 @@ bool TestRejectsSourceSymlinkBeforeCleanup() {
     return true;
   }
 
-  WorkspaceCache cache(root);
+  WorkspaceCache cache(root, "01900000-0000-7000-8000-000000000001");
   const auto result = cache.PrepareWorkspace(source);
 
   bool passed = Expect(
       !result && result.error().type == CacheErrorType::kSymlinkDetected,
       "symlink in source project is rejected");
-  passed &= Expect(fs::exists(root / "cache/current/stale.txt"),
+  passed &= Expect(fs::exists(root / "cache/01900000-0000-7000-8000-000000000001/stale.txt"),
                    "validation happens before old session cleanup");
   return passed;
 }
@@ -183,14 +183,14 @@ bool TestRejectsSymlinkCleanupTarget() {
   WriteFile(outside / "marker.txt", "must remain");
 
   std::error_code error_code;
-  fs::create_directory_symlink(outside, root / "cache/current", error_code);
+  fs::create_directory_symlink(outside, root / "cache/01900000-0000-7000-8000-000000000001", error_code);
   if (error_code) {
     std::cout << "SKIPPED: cleanup symlink test: " << error_code.message()
               << '\n';
     return true;
   }
 
-  WorkspaceCache cache(root);
+  WorkspaceCache cache(root, "01900000-0000-7000-8000-000000000001");
   const auto result = cache.PrepareWorkspace(source);
 
   bool passed = Expect(

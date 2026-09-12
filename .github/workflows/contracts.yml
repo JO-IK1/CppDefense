@@ -1,0 +1,81 @@
+name: Contract validation
+
+on:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
+  push:
+    paths:
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: contracts/requirements-ci.txt
+
+      - name: Install pinned validators
+        run: python -m pip install --requirement contracts/requirements-ci.txt
+
+      - name: Validate JSON Schema documents
+        run: |
+          check-jsonschema --check-metaschema \
+            contracts/manifests/group-v1.schema.json \
+            contracts/manifests/lab-v1.schema.json \
+            contracts/worker/v1/request.schema.json \
+            contracts/worker/v1/response.schema.json
+
+      - name: Validate manifest examples
+        run: |
+          check-jsonschema \
+            --schemafile contracts/manifests/group-v1.schema.json \
+            contracts/manifests/examples/group-v1.json
+          check-jsonschema \
+            --schemafile contracts/manifests/lab-v1.schema.json \
+            contracts/manifests/examples/lab-v1.json
+
+      - name: Validate worker examples
+        run: |
+          check-jsonschema \
+            --schemafile contracts/worker/v1/request.schema.json \
+            contracts/worker/v1/examples/prepare-request.json
+          check-jsonschema \
+            --schemafile contracts/worker/v1/response.schema.json \
+            contracts/worker/v1/examples/prepare-response.json \
+            contracts/worker/v1/examples/error-response.json \
+            contracts/worker/v1/examples/malformed-error-response.json
+
+      - name: Confirm unsafe path fixture is rejected
+        run: |
+          if check-jsonschema \
+            --schemafile contracts/manifests/lab-v1.schema.json \
+            contracts/tests/invalid-lab-zip-slip.json; then
+            echo "Unsafe fixture unexpectedly passed validation"
+            exit 1
+          fi
+
+      - name: Validate OpenAPI 3.1 document
+        run: openapi-spec-validator contracts/openapi/openapi-v1.yaml
+
+      - name: Build worker for live contract test
+        run: |
+          cmake -S . -B build-contract -DCMAKE_BUILD_TYPE=Debug -DCPP_DEFENSE_BUILD_WORKER=ON
+          cmake --build build-contract --target cpp-defense-worker --parallel 2
+
+      - name: Validate live worker responses
+        run: python tests/worker_protocol_test.py build-contract/cpp-defense-worker .

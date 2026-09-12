@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cppdefense.example/schemas/manifests/group-v1.schema.json",
+  "title": "CppDefense group import manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "group_code", "items"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "group"
+    },
+    "group_code": {
+      "$ref": "#/$defs/code"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "$defs": {
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+    },
+    "githubLogin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 39,
+      "pattern": "^(?!-)(?!.*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+    },
+    "projectPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "allOf": [
+        {
+          "pattern": "^[^/\\\\\\u0000-\\u001f][^\\\\\\u0000-\\u001f]*$"
+        },
+        {
+          "not": {
+            "pattern": "(^|/)\\.\\.?(/|$)"
+          }
+        },
+        {
+          "not": {
+            "pattern": "//"
+          }
+        }
+      ]
+    },
+    "student": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["github_login"],
+      "properties": {
+        "github_login": {
+          "$ref": "#/$defs/githubLogin"
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lab_code", "student", "project_path"],
+      "properties": {
+        "lab_code": {
+          "$ref": "#/$defs/code"
+        },
+        "student": {
+          "$ref": "#/$defs/student"
+        },
+        "project_path": {
+          "$ref": "#/$defs/projectPath"
+        }
+      }
+    }
+  }
+}

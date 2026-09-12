@@ -1,21 +1,55 @@
-MIT License
+CppDefense Proprietary Source-Available License
 
-Copyright (c) 2026 CppDefense contributors
+Copyright (c) 2026 Zakharev Georgii. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. Ownership
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The original CppDefense source code, documentation, user-interface assets,
+and other original materials owned by Zakharev Georgii are proprietary.
+No ownership or copyright is transferred by public repository visibility.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. Permission to View
+
+You may view this repository and use GitHub's standard viewing and forking
+features for personal evaluation, education about the author's work, and
+employment assessment, subject to GitHub's Terms of Service.
+
+3. Hosted Service Use
+
+You may use an official CppDefense service made available by the copyright
+holder in accordance with its user terms. Access to a hosted service does not
+grant a license to the source code.
+
+4. Restrictions
+
+Except with prior written permission from the copyright holder, under a
+previously granted license, or where applicable law requires otherwise, you
+may not use the source code or substantial portions of it in another project,
+modify it for distribution, publish copies outside GitHub's standard repository
+functionality, sell, sublicense, redistribute, or deploy CppDefense yourself.
+
+5. Previously Licensed and Third-Party Materials
+
+This license does not revoke permissions already granted for versions or
+materials previously distributed under the MIT License or another license.
+Those permissions remain governed by their original terms. This license
+applies to original materials offered under it from the revision introducing
+this notice onward, without restricting rights already granted.
+
+Student projects, uploaded archives, answers, and other user content remain
+the property of their respective authors. Third-party software and materials
+remain governed by their own license terms and are not relicensed by this
+notice.
+
+6. No Warranty
+
+THE SOFTWARE AND MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. TO THE MAXIMUM
+EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+7. Additional Permission
+
+Requests for use, deployment, contribution, or commercial licensing must be
+approved in writing by Zakharev Georgii.

@@ -1,0 +1,56 @@
+name: Go Backend
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "contracts/openapi/**"
+      - ".github/workflows/backend.yml"
+  push:
+    paths:
+      - "backend/**"
+      - "contracts/openapi/**"
+      - ".github/workflows/backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6-bookworm
+        env:
+          POSTGRES_DB: cppdefense_test
+          POSTGRES_USER: cppdefense
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cppdefense -d cppdefense_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.1"
+          cache-dependency-path: backend/go.sum
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Run unit and PostgreSQL integration tests
+        env:
+          CPPDEFENSE_TEST_DATABASE_URL: postgres://cppdefense:test-only@127.0.0.1:5432/cppdefense_test?sslmode=disable
+        run: go test -race ./...
+      - name: Run static analysis
+        run: go vet ./...
+      - name: Build commands
+        run: go build ./cmd/cppdefense
+

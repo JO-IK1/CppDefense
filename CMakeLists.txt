@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(CppDefense VERSION 1.0.0 LANGUAGES CXX)
+project(CppDefense VERSION 1.2.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -13,18 +13,31 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Library with project logic
 # =========================
 
-add_library(cpp-defense-lib
-  src/application/defense_service.cpp
-  src/application/defense_session.cpp
+
+option(CPP_DEFENSE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+if(CPP_DEFENSE_SANITIZERS AND NOT MSVC)
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+add_library(cpp-defense-core
   src/application/candidate_picker.cpp
   src/application/defense_timer.cpp
+  src/infrastructure/simple_source_parser.cpp
+  src/infrastructure/source_parser/source_analysis.cpp
+  src/infrastructure/source_parser/entity_parser.cpp
+  src/core/sha256.cpp
+)
+target_include_directories(cpp-defense-core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_compile_features(cpp-defense-core PUBLIC cxx_std_23)
+
+add_library(cpp-defense-infrastructure
+  src/application/defense_service.cpp
+  src/application/defense_session.cpp
 
   src/infrastructure/workspace_cache.cpp
   src/infrastructure/project_scanner.cpp
   src/infrastructure/source_file_repository.cpp
-  src/infrastructure/simple_source_parser.cpp
-  src/infrastructure/source_parser/source_analysis.cpp
-  src/infrastructure/source_parser/entity_parser.cpp
   src/infrastructure/file_masker.cpp
   src/infrastructure/result_file.cpp
   src/infrastructure/file_patcher.cpp
@@ -34,35 +47,65 @@ add_library(cpp-defense-lib
   src/infrastructure/process_runner.cpp
   src/infrastructure/runtime_path.cpp
 
-  src/ui/cli_app.cpp
-  src/ui/command_parser.cpp
 )
 
-target_include_directories(cpp-defense-lib
+target_include_directories(cpp-defense-infrastructure
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
 
-target_compile_features(cpp-defense-lib
+target_compile_features(cpp-defense-infrastructure
   PUBLIC
     cxx_std_23
 )
 
-target_compile_definitions(cpp-defense-lib
+target_compile_definitions(cpp-defense-infrastructure
   PRIVATE
     CPP_DEFENSE_VERSION="${PROJECT_VERSION}"
 )
 
 if (MSVC)
-  target_compile_options(cpp-defense-lib PRIVATE /W4)
+  target_compile_options(cpp-defense-infrastructure PRIVATE /W4)
 else()
-  target_compile_options(cpp-defense-lib PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(cpp-defense-infrastructure PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 
 # =========================
 # CLI executable
 # =========================
+
+
+target_link_libraries(cpp-defense-infrastructure PUBLIC cpp-defense-core)
+add_library(cpp-defense-ui src/ui/cli_app.cpp src/ui/command_parser.cpp)
+target_link_libraries(cpp-defense-ui PUBLIC cpp-defense-infrastructure)
+target_compile_definitions(cpp-defense-ui PRIVATE CPP_DEFENSE_VERSION="${PROJECT_VERSION}")
+# Compatibility aggregate for existing CLI tests and downstream builds.
+add_library(cpp-defense-lib INTERFACE)
+target_link_libraries(cpp-defense-lib INTERFACE cpp-defense-ui)
+
+option(CPP_DEFENSE_BUILD_WORKER "Build headless JSON worker" ON)
+if(CPP_DEFENSE_BUILD_WORKER)
+  include(FetchContent)
+  FetchContent_Declare(nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  FetchContent_MakeAvailable(nlohmann_json)
+  add_library(cpp-defense-worker-adapter
+    src/worker/protocol.cpp
+    src/worker/workspace.cpp
+    src/worker/worker.cpp
+  )
+  target_link_libraries(cpp-defense-worker-adapter PUBLIC
+    cpp-defense-infrastructure nlohmann_json::nlohmann_json)
+  add_executable(cpp-defense-worker apps/worker/main.cpp)
+  target_link_libraries(cpp-defense-worker PRIVATE cpp-defense-worker-adapter)
+  install(TARGETS cpp-defense-worker RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(FILES ${nlohmann_json_SOURCE_DIR}/LICENSE.MIT
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}/third_party/nlohmann_json)
+endif()
 
 add_executable(cpp-defense
   apps/cli/main.cpp
@@ -321,3 +364,21 @@ else()
   set(CPACK_GENERATOR TGZ)
 endif()
 include(CPack)
+
+if(CPP_DEFENSE_BUILD_WORKER)
+  add_executable(cpp-defense-worker-tests tests/worker_test.cpp)
+  target_link_libraries(cpp-defense-worker-tests PRIVATE cpp-defense-worker-adapter)
+  add_test(NAME worker.unit COMMAND cpp-defense-worker-tests)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME worker.protocol COMMAND ${Python3_EXECUTABLE}
+      ${PROJECT_SOURCE_DIR}/tests/worker_protocol_test.py
+      $<TARGET_FILE:cpp-defense-worker> ${PROJECT_SOURCE_DIR})
+  endif()
+  find_program(CPP_DEFENSE_GO go)
+  if(CPP_DEFENSE_GO)
+    add_test(NAME worker.go-client COMMAND ${CPP_DEFENSE_GO} run
+      ${PROJECT_SOURCE_DIR}/tests/worker_smoke.go $<TARGET_FILE:cpp-defense-worker>)
+    set_tests_properties(worker.go-client PROPERTIES TIMEOUT 120)
+  endif()
+endif()

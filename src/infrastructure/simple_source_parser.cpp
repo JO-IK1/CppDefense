@@ -1,4 +1,4 @@
-#include "cpp_defense/infrastructure/simple_source_parser.hpp"
+#include "cpp_defense/core/source_parser.hpp"
 
 #include <expected>
 #include <filesystem>

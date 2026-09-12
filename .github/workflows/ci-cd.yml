@@ -9,6 +9,31 @@ permissions:
   contents: read
 
 jobs:
+  sanitizers:
+    name: Sanitizers (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build-sanitized
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCPP_DEFENSE_BUILD_WORKER=ON
+          -DCPP_DEFENSE_SANITIZERS=ON
+
+      - name: Build
+        run: cmake --build build-sanitized --parallel 2
+
+      - name: Test
+        run: >-
+          ctest --test-dir build-sanitized
+          --output-on-failure
+          --parallel 2
+
   build-and-test:
     name: Build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

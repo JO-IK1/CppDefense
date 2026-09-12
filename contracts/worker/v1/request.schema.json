@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cppdefense.example/schemas/worker/v1/request.schema.json",
+  "title": "cpp-defense-worker request v1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/analyzeProjectRequest"
+    },
+    {
+      "$ref": "#/$defs/prepareDefenseRequest"
+    },
+    {
+      "$ref": "#/$defs/materializeAttemptRequest"
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "uint64": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "maxLength": 20
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "allOf": [
+        {
+          "pattern": "^[^/\\\\\\u0000-\\u001f][^\\\\\\u0000-\\u001f]*$"
+        },
+        {
+          "not": {
+            "pattern": "(^|/)\\.\\.?(/|$)"
+          }
+        },
+        {
+          "not": {
+            "pattern": "//"
+          }
+        }
+      ]
+    },
+    "base": {
+      "type": "object",
+      "required": ["protocol_version", "request_id", "session_id", "command", "payload"],
+      "properties": {
+        "protocol_version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "command": {
+          "enum": ["analyze_project", "prepare_defense", "materialize_attempt"]
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "parserOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_extensions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^\\.[A-Za-z0-9]{1,10}$"
+          },
+          "default": [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"]
+        },
+        "ignored_directories": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^/\\\\:\\u0000-\\u001f]+$",
+            "not": {
+              "enum": [".", ".."]
+            }
+          },
+          "default": [".git", "build", ".idea", ".vscode"]
+        }
+      }
+    },
+    "selectedFunction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "function_name",
+        "file_path",
+        "signature_begin",
+        "body_begin",
+        "body_end",
+        "source_sha256"
+      ],
+      "properties": {
+        "function_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "file_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "signature_begin": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "body_begin": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "body_end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "analyzeProjectRequest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "protocol_version": {},
+            "request_id": {},
+            "session_id": {},
+            "command": {
+              "const": "analyze_project"
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["project_root"],
+              "properties": {
+                "project_root": {
+                  "$ref": "#/$defs/relativePath"
+                },
+                "parser_options": {
+                  "$ref": "#/$defs/parserOptions"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "prepareDefenseRequest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "protocol_version": {},
+            "request_id": {},
+            "session_id": {},
+            "command": {
+              "const": "prepare_defense"
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["project_root", "top_n", "seed"],
+              "properties": {
+                "project_root": {
+                  "$ref": "#/$defs/relativePath"
+                },
+                "top_n": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
+                },
+                "seed": {
+                  "$ref": "#/$defs/uint64"
+                },
+                "parser_options": {
+                  "$ref": "#/$defs/parserOptions"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "materializeAttemptRequest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "protocol_version": {},
+            "request_id": {},
+            "session_id": {},
+            "command": {
+              "const": "materialize_attempt"
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["project_root", "output_root", "selected_function", "answer"],
+              "properties": {
+                "project_root": {
+                  "$ref": "#/$defs/relativePath"
+                },
+                "output_root": {
+                  "$ref": "#/$defs/relativePath"
+                },
+                "selected_function": {
+                  "$ref": "#/$defs/selectedFunction"
+                },
+                "answer": {
+                  "type": "string",
+                  "description": "Function body contents without the outer braces; nested blocks are allowed.",
+                  "maxLength": 1048576
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

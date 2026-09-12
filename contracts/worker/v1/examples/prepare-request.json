@@ -1,0 +1,11 @@
+{
+  "protocol_version": "1.0",
+  "request_id": "0199a123-4567-7abc-8def-0123456789ab",
+  "session_id": "0199a123-4568-7abc-8def-0123456789ab",
+  "command": "prepare_defense",
+  "payload": {
+    "project_root": "project",
+    "top_n": 5,
+    "seed": "1184750593472389123"
+  }
+}

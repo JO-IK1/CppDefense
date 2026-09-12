@@ -14,8 +14,6 @@
 namespace cpp_defense {
 namespace {
 
-constexpr std::array<std::string_view, 8> kSupportedExtensions{
-    ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"};
 
 std::string ToLower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -28,11 +26,12 @@ std::string ToLower(std::string value) {
   return value;
 }
 
-bool IsSupportedSourceFile(const std::filesystem::path& file_path) {
+bool IsSupportedSourceFile(const std::filesystem::path& file_path,
+                           const ProjectScannerOptions& options) {
   const std::string extension = ToLower(file_path.extension().string());
 
-  return std::find(kSupportedExtensions.begin(), kSupportedExtensions.end(),
-                   extension) != kSupportedExtensions.end();
+  return std::find(options.source_extensions.begin(), options.source_extensions.end(),
+                   extension) != options.source_extensions.end();
 }
 
 bool ShouldSkipDirectory(
@@ -50,6 +49,7 @@ bool ShouldSkipDirectory(
 
 ProjectScanner::ProjectScanner(ProjectScannerOptions options)
     : options_(std::move(options)) {
+  for (auto& extension : options_.source_extensions) extension = ToLower(extension);
   for (std::string& directory_name : options_.excluded_directory_names) {
     directory_name = ToLower(std::move(directory_name));
   }
@@ -118,7 +118,7 @@ std::expected<SourceFilePaths, ScanError> ProjectScanner::FindSourceFiles(
         iterator.disable_recursion_pending();
       }
     } else if (std::filesystem::is_regular_file(entry_status)) {
-      if (IsSupportedSourceFile(entry_path)) {
+      if (IsSupportedSourceFile(entry_path, options_)) {
         source_file_paths.push_back(entry_path);
       }
     }

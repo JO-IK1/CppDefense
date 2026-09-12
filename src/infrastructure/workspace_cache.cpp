@@ -1,4 +1,6 @@
 #include "cpp_defense/infrastructure/workspace_cache.hpp"
+#include "cpp_defense/infrastructure/session_id.hpp"
+#include <stdexcept>
 
 #include <expected>
 #include <filesystem>
@@ -107,7 +109,7 @@ std::expected<void, CacheError> ValidateCleanupTarget(const Workspace& workspace
           workspace.runtime_root_path ||
       workspace.cache_root_path.filename() != "cache" ||
       workspace.session_root_path.parent_path() != workspace.cache_root_path ||
-      workspace.session_root_path.filename() != "current") {
+      !IsSessionId(workspace.session_root_path.filename().string())) {
     return std::unexpected(
         DangerousCleanupPath(workspace.session_root_path));
   }
@@ -207,8 +209,12 @@ std::expected<void, CacheError> CopySourceProject(const Workspace& workspace) {
 
 }  // namespace
 
-WorkspaceCache::WorkspaceCache(std::filesystem::path runtime_root_path)
-    : runtime_root_path_(std::move(runtime_root_path)) {}
+WorkspaceCache::WorkspaceCache(std::filesystem::path runtime_root_path,
+                               std::string session_id)
+    : runtime_root_path_(std::move(runtime_root_path)),
+      session_id_(session_id.empty() ? NewSessionId() : std::move(session_id)) {
+  if (!IsSessionId(session_id_)) throw std::invalid_argument("Invalid session UUID");
+}
 
 std::expected<Workspace, CacheError> WorkspaceCache::CalculateWorkspace(
     const std::filesystem::path& source_project_path) const {
@@ -236,7 +242,7 @@ std::expected<Workspace, CacheError> WorkspaceCache::CalculateWorkspace(
   workspace.runtime_root_path = *normalized_runtime_root;
   workspace.source_project_path = *normalized_source_project;
   workspace.cache_root_path = (workspace.runtime_root_path / "cache").lexically_normal();
-  workspace.session_root_path = (workspace.cache_root_path / "current").lexically_normal();
+  workspace.session_root_path = (workspace.cache_root_path / session_id_).lexically_normal();
   workspace.project_container_path = (workspace.session_root_path / "project").lexically_normal();
   workspace.cached_project_path = (workspace.project_container_path / project_name).lexically_normal();
   workspace.build_path = (workspace.session_root_path / "build").lexically_normal();

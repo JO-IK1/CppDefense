@@ -1,0 +1,13 @@
+{
+  "protocol_version": "1.0",
+  "request_id": null,
+  "session_id": null,
+  "command": null,
+  "status": "error",
+  "error": {
+    "code": "INVALID_JSON",
+    "message": "Malformed JSON or invalid state document",
+    "category": "invalid_request",
+    "retryable": false
+  }
+}

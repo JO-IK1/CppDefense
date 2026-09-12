@@ -27,6 +27,7 @@
 # Fortran module files
 *.mod
 *.smod
+!/backend/go.mod
 
 # Compiled Static libraries
 *.lai
@@ -70,3 +71,7 @@ Testing/
 
 # CppDefense runtime cache
 /cache/
+
+# Go Backend local state
+/backend/.env
+/backend/cppdefense
