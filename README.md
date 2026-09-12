@@ -104,6 +104,7 @@ Current scope:
 - [Stage 1 readiness report](docs/STAGE_1_REPORT.md);
 - [Stage 2 readiness report](docs/STAGE_2_REPORT.md) and
   [Go Backend guide](backend/README.md);
+- [Stage 3 storage report](docs/STAGE_3_REPORT.md);
 - [Worker protocol](contracts/worker/v1/README.md) and its JSON Schemas.
 
 ## License

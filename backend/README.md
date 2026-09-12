@@ -1,8 +1,9 @@
 # CppDefense Go Backend
 
-Каркас Этапа 2 предоставляет HTTP API process, PostgreSQL pool, forward-only
+Backend предоставляет HTTP API process, PostgreSQL pool, forward-only
 миграции, server-side session primitives, CSRF token primitives, request ID,
-единые problem details, JSON-логи, audit chain и health checks.
+единые problem details, JSON-логи, audit chain, health checks и приватное
+файловое хранилище для архивов лабораторных.
 
 ## Локальный запуск
 
@@ -34,8 +35,32 @@ go run ./cmd/cppdefense api
 базу. Отдельная команда `migrate` нужна для production-развёртывания, где
 изменение схемы обычно выполняют до переключения приложения.
 
-Проверка процесса: `GET http://127.0.0.1:8080/health/live`. Проверка базы и
-миграций: `GET http://127.0.0.1:8080/health/ready`.
+Проверка процесса: `GET http://127.0.0.1:8080/health/live`. Проверка базы,
+миграций и object storage: `GET http://127.0.0.1:8080/health/ready`.
+
+## Хранилище лабораторных
+
+В `.env.example` включён S3-режим, который использует локальный MinIO из
+Compose. Bucket создаётся без публичной policy. В object key находится только
+namespace, UUID и расширение — логины, ФИО и другие персональные данные не
+используются.
+
+- `original-archives/` хранит исходные ZIP преподавателя;
+- `normalized-submissions/` хранит неизменяемые нормализованные проекты;
+- `safe-logs/` зарезервирован для очищенных логов runner.
+
+Для быстрых unit-тестов или разработки без MinIO установите
+`CPPDEFENSE_STORAGE_MODE=local`. Файлы попадут в `./var/objects` с правами
+только для владельца процесса.
+
+Сверка БД и хранилища запускается командой:
+
+```sh
+go run ./cmd/cppdefense reconcile-storage
+```
+
+Она сообщает о ссылках на отсутствующие объекты, лишних объектах и ошибках
+SHA-256. Команда ничего автоматически не удаляет.
 
 ## Тесты
 
@@ -44,8 +69,13 @@ go test ./...
 ```
 
 Интеграционные тесты включаются переменной
-`CPPDEFENSE_TEST_DATABASE_URL`. Они повторно запускают мигратор, проверяют
-уникальность GitHub ID и запрет обхода машины состояний.
+`CPPDEFENSE_TEST_DATABASE_URL` и `CPPDEFENSE_TEST_S3_ENDPOINT`. Они повторно
+запускают мигратор, проверяют ограничения БД и выполняют round-trip через
+приватный S3 bucket.
+
+Compose использует persistent volumes `cppdefense-postgres` и
+`cppdefense-minio`. Обычные stop/start и `docker compose down` сохраняют
+данные. Не используйте `docker compose down -v`, если данные нужны.
 
 ## Миграционная политика
 

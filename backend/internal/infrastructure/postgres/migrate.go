@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+//go:embed migrations/*.sql
 var migrationFiles embed.FS
 
 const migrationLockID int64 = 43677068020200

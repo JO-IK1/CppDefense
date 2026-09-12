@@ -42,7 +42,7 @@ func TestMigrationsAreRepeatable(t *testing.T) {
 	if err := db.Pool().QueryRow(context.Background(), "select count(*) from cppdefense_schema_migrations").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
+	if count != 2 {
 		t.Fatalf("migration count = %d", count)
 	}
 }

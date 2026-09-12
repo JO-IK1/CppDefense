@@ -11,7 +11,10 @@ import (
 	"syscall"
 
 	"github.com/JO-IK1/CppDefense/backend/internal/application/audit"
+	appstorage "github.com/JO-IK1/CppDefense/backend/internal/application/storage"
 	"github.com/JO-IK1/CppDefense/backend/internal/config"
+	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/objectstore/local"
+	s3storage "github.com/JO-IK1/CppDefense/backend/internal/infrastructure/objectstore/s3"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
 	"github.com/JO-IK1/CppDefense/backend/internal/transport/httpapi"
 )
@@ -51,21 +54,46 @@ func run(args []string) error {
 		logger.Info("database migrations applied")
 		return nil
 	case "healthcheck":
+		fileStorage, err := openStorage(ctx, cfg.Storage)
+		if err != nil {
+			return fmt.Errorf("storage: %w", err)
+		}
 		checkCtx, cancel := context.WithTimeout(ctx, cfg.Database.HealthTimeout)
 		defer cancel()
 		if err := postgres.Ready(checkCtx, db); err != nil {
 			return fmt.Errorf("not ready: %w", err)
 		}
+		if err := fileStorage.Check(checkCtx); err != nil {
+			return fmt.Errorf("storage not ready: %w", err)
+		}
 		fmt.Println("ready")
 		return nil
+	case "reconcile-storage":
+		fileStorage, err := openStorage(ctx, cfg.Storage)
+		if err != nil {
+			return fmt.Errorf("storage: %w", err)
+		}
+		report, err := appstorage.Reconcile(ctx, fileStorage, postgres.NewStorageRepository(db))
+		if err != nil {
+			return fmt.Errorf("reconcile storage: %w", err)
+		}
+		fmt.Printf("checked=%d missing=%d orphaned=%d\n", report.Checked, len(report.Missing), len(report.Orphaned))
+		if len(report.Missing) != 0 {
+			return errors.New("storage reconciliation found missing objects")
+		}
+		return nil
 	case "api":
-		return serve(ctx, cfg, logger, db)
+		fileStorage, err := openStorage(ctx, cfg.Storage)
+		if err != nil {
+			return fmt.Errorf("storage: %w", err)
+		}
+		return serve(ctx, cfg, logger, db, fileStorage)
 	default:
 		return usageError()
 	}
 }
 
-func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, db *postgres.Database) error {
+func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, db *postgres.Database, fileStorage appstorage.FileStorage) error {
 	if cfg.AutoMigrate {
 		if err := postgres.Migrate(ctx, db); err != nil {
 			return fmt.Errorf("automatic migration: %w", err)
@@ -76,7 +104,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, db *post
 	handler := httpapi.New(httpapi.Dependencies{
 		Logger: logger,
 		Ready: func(ctx context.Context) error {
-			return postgres.Ready(ctx, db)
+			return errors.Join(postgres.Ready(ctx, db), fileStorage.Check(ctx))
 		},
 		Audit:  auditService,
 		Config: cfg.HTTP,
@@ -117,5 +145,22 @@ func newLogger(level slog.Level) *slog.Logger {
 }
 
 func usageError() error {
-	return errors.New("usage: cppdefense <api|migrate|healthcheck>")
+	return errors.New("usage: cppdefense <api|migrate|healthcheck|reconcile-storage>")
+}
+
+func openStorage(ctx context.Context, cfg config.Storage) (appstorage.FileStorage, error) {
+	if cfg.Mode == "local" {
+		return local.New(cfg.LocalRoot)
+	}
+	storage, err := s3storage.New(s3storage.Config{
+		Endpoint: cfg.Endpoint, Region: cfg.Region, Bucket: cfg.Bucket,
+		AccessKey: cfg.AccessKey, SecretKey: cfg.SecretKey, Secure: cfg.Secure, SpoolDir: cfg.SpoolDir,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := storage.EnsurePrivateBucket(ctx); err != nil {
+		return nil, err
+	}
+	return storage, nil
 }

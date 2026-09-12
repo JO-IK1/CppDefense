@@ -75,3 +75,4 @@ Testing/
 # Go Backend local state
 /backend/.env
 /backend/cppdefense
+/backend/var/

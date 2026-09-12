@@ -16,6 +16,7 @@ type Config struct {
 	HTTP        HTTP
 	Database    Database
 	Session     Session
+	Storage     Storage
 	LogLevel    slog.Level
 	AutoMigrate bool
 }
@@ -45,6 +46,18 @@ type Session struct {
 	HashKey []byte
 	CSRFKey []byte
 	TTL     time.Duration
+}
+
+type Storage struct {
+	Mode      string
+	LocalRoot string
+	Endpoint  string
+	Region    string
+	Bucket    string
+	AccessKey string
+	SecretKey string
+	Secure    bool
+	SpoolDir  string
 }
 
 func Load() (Config, error) {
@@ -77,6 +90,15 @@ func Load() (Config, error) {
 	cfg.Session.HashKey = secret("CPPDEFENSE_SESSION_HASH_KEY", &err)
 	cfg.Session.CSRFKey = secret("CPPDEFENSE_CSRF_HASH_KEY", &err)
 	cfg.Session.TTL = duration("CPPDEFENSE_SESSION_TTL", 24*time.Hour, &err)
+	cfg.Storage.Mode = strings.ToLower(env("CPPDEFENSE_STORAGE_MODE", "local"))
+	cfg.Storage.LocalRoot = env("CPPDEFENSE_STORAGE_LOCAL_ROOT", "./var/objects")
+	cfg.Storage.Endpoint = strings.TrimSpace(os.Getenv("CPPDEFENSE_STORAGE_S3_ENDPOINT"))
+	cfg.Storage.Region = env("CPPDEFENSE_STORAGE_S3_REGION", "us-east-1")
+	cfg.Storage.Bucket = env("CPPDEFENSE_STORAGE_S3_BUCKET", "cppdefense")
+	cfg.Storage.AccessKey = strings.TrimSpace(os.Getenv("CPPDEFENSE_STORAGE_S3_ACCESS_KEY"))
+	cfg.Storage.SecretKey = strings.TrimSpace(os.Getenv("CPPDEFENSE_STORAGE_S3_SECRET_KEY"))
+	cfg.Storage.Secure = boolean("CPPDEFENSE_STORAGE_S3_SECURE", true, &err)
+	cfg.Storage.SpoolDir = strings.TrimSpace(os.Getenv("CPPDEFENSE_STORAGE_SPOOL_DIR"))
 	cfg.AutoMigrate = boolean("CPPDEFENSE_AUTO_MIGRATE", true, &err)
 	cfg.LogLevel = logLevel(env("CPPDEFENSE_LOG_LEVEL", "info"), &err)
 
@@ -88,6 +110,15 @@ func Load() (Config, error) {
 	}
 	if cfg.Session.TTL <= 0 {
 		return cfg, errors.New("session TTL must be positive")
+	}
+	if cfg.Storage.Mode != "local" && cfg.Storage.Mode != "s3" {
+		return cfg, errors.New("CPPDEFENSE_STORAGE_MODE must be local or s3")
+	}
+	if cfg.Storage.Mode == "local" && strings.TrimSpace(cfg.Storage.LocalRoot) == "" {
+		return cfg, errors.New("CPPDEFENSE_STORAGE_LOCAL_ROOT is required in local mode")
+	}
+	if cfg.Storage.Mode == "s3" && (cfg.Storage.Endpoint == "" || cfg.Storage.Bucket == "" || cfg.Storage.AccessKey == "" || cfg.Storage.SecretKey == "") {
+		return cfg, errors.New("S3 endpoint, bucket, access key and secret key are required in s3 mode")
 	}
 	return cfg, nil
 }
