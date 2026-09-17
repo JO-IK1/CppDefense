@@ -15,13 +15,18 @@ comment on column auth_flows.nonce_hash is
 create or replace function validate_active_user_identity() returns trigger
 language plpgsql as $$
 declare
-    target_id uuid := coalesce(new.id, old.id);
+    target_id uuid;
 begin
-    if exists (select 1 from users where id = target_id and state = 'active')
+    if tg_table_name = 'users' then
+        target_id = coalesce(new.id, old.id);
+    else
+        target_id = coalesce(new.user_id, old.user_id);
+    end if;
+    if exists (select 1 from users where id = target_id and status = 'active')
        and not exists (select 1 from github_identities where user_id = target_id)
        and not exists (select 1 from legacy_telegram_identities where user_id = target_id) then
-        raise exception 'active user requires a login identity';
+        raise exception 'active user requires a login identity' using errcode = '23514';
     end if;
-    return coalesce(new, old);
+    return null;
 end;
 $$;
