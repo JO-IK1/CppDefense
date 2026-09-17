@@ -1,905 +1,279 @@
-# CppDefense Architecture and Execution Model
+# Architecture
 
-## 1. Purpose and Scope
+CppDefense has two execution modes: a local C++ CLI and a web platform built
+around the same defense rules. The system favors a modular monolith and explicit
+process boundaries over microservices.
 
-CppDefense is a C++23 console application designed to reproduce a university-style C++ laboratory defense workflow. The application prepares an isolated copy of a user project, discovers supported code entities, selects a defense target, removes its implementation from the cached project, and asks the user to restore the selected entity within a configured time limit.
+## Components
 
-The application then validates the submitted implementation by creating a temporary check workspace, patching the submitted code into that copy, configuring and building the project with CMake, and executing its CTest suite.
+- `cpp-defense-core` contains parsing, candidate selection, timing, and hashing.
+  It has no CLI, JSON, database, or network dependencies.
+- `application` implements the local defense workflow.
+- `infrastructure` owns filesystem, workspace, parser, and process adapters.
+- `cpp-defense` is the interactive terminal application.
+- `cpp-defense-worker` exposes deterministic project operations over a versioned
+  JSON stdin/stdout protocol.
+- `backend` is a Go modular monolith for HTTP, authentication, imports,
+  defenses, queue management, persistence, and the web UI.
+- Runner Agent is a separate process on an isolated machine. It invokes the C++
+  worker and executes untrusted builds inside disposable containers.
+- PostgreSQL is the source of truth for metadata and state. Private S3-compatible
+  storage holds archives and sanitized logs.
 
-The original source project is never modified.
+The versioned boundaries between the backend, runner, worker, and import tools
+live in [`contracts/`](../contracts/README.md).
 
-This document describes the architecture of the v1.0 console implementation and the execution flow of the main defense operations.
-
-## 2. Architectural Overview
-
-CppDefense follows a four-layer structure:
-
-```text
-core/
-application/
-infrastructure/
-ui/
+```mermaid
+flowchart LR
+  Browser[Browser] --> Backend[Go backend]
+  GitHub[GitHub OAuth] --> Backend
+  Backend --> DB[(PostgreSQL)]
+  Backend --> Store[(Private object storage)]
+  Backend -->|leased jobs| Runner[Runner Agent]
+  Runner -->|JSON protocol| Worker[C++ worker]
+  Runner --> Sandbox[Disposable build container]
+  CLI[Local CLI] --> Core[C++ core]
+  Worker --> Core
 ```
 
-The layers are intentionally separated so that domain state and application rules do not depend on the console interface, filesystem details, or a future frontend implementation.
+| Boundary | Responsibility | Trust level |
+|---|---|---|
+| C++ core | Parsing, selection, hashes, defense rules | Pure domain logic |
+| Go backend | Identity, policy, orchestration, persistence | Trusted service |
+| Runner | Lease execution and resource enforcement | Restricted service |
+| Build container | Student CMake, compiler, and tests | Untrusted |
+| PostgreSQL | Authoritative metadata and state | Private |
+| Object storage | Immutable project bytes and safe logs | Private |
 
-The high-level execution model is:
+## Local defense flow
 
-```text
-main.cpp
-   ↓
-CliApp
-   ↓
-DefenseSession
-   ├─ project preparation
-   ├─ source analysis
-   ├─ candidate selection
-   ├─ result-file generation
-   ├─ source masking
-   ├─ timer management
-   └─ solution checking
-        ├─ temporary workspace creation
-        ├─ source patching
-        ├─ CMake configure
-        ├─ build
-        └─ CTest execution
+```mermaid
+flowchart LR
+  A[Trusted project] --> B[Isolated session copy]
+  B --> C[Select and mask entity]
+  C --> D[Edit result.txt]
+  D --> E[Temporary check copy]
+  E --> F[CMake configure]
+  F --> G[Build]
+  G --> H[CTest]
+  H --> I[Final report]
 ```
 
-## 3. Layer Responsibilities
+The original project is never modified. Each check uses a fresh temporary copy,
+and the submitted answer replaces only the contents between the recorded outer
+braces. Source hashes and byte offsets prevent applying an answer to changed
+input.
 
-### 3.1 `core`
+Candidate selection is deterministic when a seed is supplied: the parser finds
+supported entities, retains the largest `N`, and chooses one with a stable
+64-bit random seed. The parser is intentionally lightweight and is not a full
+C++ frontend.
 
-The `core` layer contains domain models, reusable value types, generic containers, state enumerations, and typed error models.
+## Web defense flow
 
-Representative types include:
+1. A teacher uploads an archive for review.
+2. The backend validates its manifest and ZIP structure before creating an
+   immutable submission version.
+3. A student starts a defense tied to one exact submission version.
+4. PostgreSQL queues a preparation or check job and grants a time-limited lease
+   to a runner.
+5. The runner downloads the authorized object, invokes the worker, runs the
+   project in a sandbox, and returns a bounded result.
+6. The backend validates the lease and state transition before committing the
+   result and audit event.
 
-```text
-CodeEntityInfo
-FixedPriorityQueue
-Workspace
-DefenseStatus
-DefenseResult
-BuildResult
-CacheError
-ParseError
-PickerError
+Retries are idempotent. A stale runner cannot overwrite a newer result, and a
+new submission version never changes an active defense.
+
+```mermaid
+sequenceDiagram
+  actor Teacher
+  actor Student
+  participant B as Backend
+  participant S as Object storage
+  participant D as PostgreSQL
+  participant R as Runner
+  Teacher->>B: Upload and approve archive
+  B->>S: Store immutable project
+  B->>D: Create submission version
+  Student->>B: Start defense
+  B->>D: Create job
+  R->>B: Lease job
+  R->>S: Download scoped object
+  R->>R: Run worker in sandbox
+  R->>B: Complete with lease token
+  B->>D: Commit result and audit event
 ```
 
-The layer does not coordinate console interaction or filesystem workflows. Its purpose is to define the data contracts used by the rest of the system.
+## Identity and authorization
 
-### 3.2 `application`
+GitHub OAuth with PKCE is the only login method. The numeric GitHub ID is the
+stable external identity; the login is display and initial matching data.
+Accounts require approval before normal access.
 
-The `application` layer implements use cases and coordinates the defense workflow.
+Roles are `student`, `teacher`, and `admin`. Role checks alone are insufficient:
+every object query is scoped to the student record or teacher group. Browser
+sessions use an opaque, hashed server-side token and CSRF protection. Runner
+authentication is separate from user sessions.
 
-Primary components:
+## Logical data model
 
-```text
-DefenseService
-DefenseSession
-DefenseTimer
-CandidatePicker
+The diagram shows ownership and lifecycle relationships, not every physical
+column or index.
+
+```mermaid
+erDiagram
+  USERS ||--o| GITHUB_IDENTITIES : authenticates_with
+  USERS ||--o{ WEB_SESSIONS : owns
+  USERS ||--o| STUDENT_RECORDS : claims
+  GROUPS ||--o{ STUDENT_RECORDS : contains
+  GROUPS ||--o{ GROUP_TEACHERS : assigns
+  USERS ||--o{ GROUP_TEACHERS : teaches
+  GROUPS ||--o{ LABS : defines
+  STUDENT_RECORDS ||--o{ SUBMISSION_VERSIONS : owns
+  LABS ||--o{ SUBMISSION_VERSIONS : versions
+  USERS ||--o{ IMPORTS : uploads
+  IMPORTS ||--o{ IMPORT_ITEMS : contains
+  SUBMISSION_VERSIONS ||--o{ DEFENSES : protects
+  DEFENSES ||--o{ CHECK_ATTEMPTS : receives
+  DEFENSES ||--o{ RUNNER_JOBS : schedules
+  RUNNER_JOBS ||--o{ JOB_LEASES : leases
+  RUNNERS ||--o{ JOB_LEASES : receives
+  USERS ||--o{ AUDIT_EVENTS : acts
 ```
 
-`DefenseSession` is the main application-level orchestrator. It owns the state of the active defense and delegates technical operations to smaller infrastructure components.
-
-### 3.3 `infrastructure`
-
-The `infrastructure` layer contains implementations that interact with files, directories, source text, build tools, and operating-system processes.
-
-Primary components:
-
-```text
-WorkspaceCache
-ProjectScanner
-SourceFileRepository
-SimpleSourceParser
-FileMasker
-ResultFile
-CheckWorkspace
-FilePatcher
-BuildRunner
-DefenseResultWriter
-```
-
-### 3.4 `ui`
-
-The `ui` layer contains console-specific behavior:
-
-```text
-CliApp
-CommandParser
-```
-
-`CliApp` interprets user commands, invokes `DefenseSession`, and prints results. Defense logic is intentionally not implemented directly in the CLI.
-
-## 4. Program Entry Point
-
-The executable starts in `apps/cli/main.cpp`.
-
-The entry point creates a `CliApp`, supplies the standard input/output streams,
-resolves the per-user runtime directory, and calls `Run()`.
-
-The intended responsibility of `main.cpp` is deliberately small:
-
-```text
-resolve per-user runtime root
-        ↓
-construct CliApp
-        ↓
-run application
-```
-
-This keeps application logic out of the entry point and preserves testability of the remaining components.
-
-## 5. CLI Command Processing
-
-`CommandParser` converts startup arguments and interactive input into typed command values. `CliApp` then dispatches the corresponding operation.
-
-The primary interactive commands are:
-
-```text
-start
-check
-info
-time
-quit
-```
-
-Configuration commands can also modify the selected project path, candidate count, timer duration, and candidate selection mode.
-
-The relationship is:
-
-```text
-raw user input
-      ↓
-CommandParser
-      ↓
-InteractiveCommandType
-      ↓
-CliApp
-      ↓
-DefenseSession operation
-```
-
-The CLI is therefore responsible for presentation and command routing, while `DefenseSession` remains responsible for defense behavior.
-
-## 6. Defense Session State
-
-`DefenseSession` owns the current defense state and coordinates all major operations.
-
-The session uses `DefenseStatus`:
-
-```text
-kIdle
-kPreparing
-kWorkspaceReady
-kActive
-kChecking
-kSuccess
-kFailed
-kExpired
-kError
-```
-
-A normal successful lifecycle is:
-
-```text
-Idle
- ↓
-Preparing
- ↓
-WorkspaceReady
- ↓
-Active
- ↓
-Checking
- ↓
-Success
-```
-
-A failed build or failed test run does not terminate the defense:
-
-```text
-Active
- ↓
-Checking
- ↓
-Active
-```
-
-This allows the user to modify `result.txt` and submit another check while time remains.
-
-A timeout transitions the session to:
-
-```text
-Expired
-```
-
-An unrecoverable preparation or infrastructure error transitions the session to:
-
-```text
-Error
-```
-
-## 7. Start Workflow
-
-`DefenseSession::Start()` initializes a new defense.
-
-Before processing a new project, the previous session state is cleared:
-
-```text
-timer stopped
-workspace reset
-selected entity reset
-attempt counter reset
-last build log cleared
-status = Preparing
-```
-
-The start operation then performs the following stages.
-
-### 7.1 Workspace Preparation
-
-`DefenseService` combines two operations:
-
-```text
-WorkspaceCache
-ProjectScanner
-```
-
-`WorkspaceCache` validates the selected source project, creates a new isolated UUID session directory, removes only an incomplete directory with that same session ID if necessary, and recursively copies the source project into the CppDefense cache.
-
-For a project named `labwork_simple`, the active cached project is located under:
-
-```text
-cache/<session-id>/project/labwork_simple/
-```
-
-All subsequent source analysis and masking operations use this cached copy rather than the original project.
-
-### 7.2 Source Discovery
-
-`ProjectScanner` recursively searches the cached project for supported C and C++ source files.
-
-It also excludes directories that should not participate in source analysis, such as build output, version-control metadata, IDE data, and other configured exclusions.
-
-The result is a collection of source-file paths used by the parser.
-
-### 7.3 Source Reading
-
-`SourceFileRepository` reads source files in binary mode.
-
-Binary mode is important because source offsets are stored as byte offsets. Unintended line-ending conversion would invalidate those positions.
-
-### 7.4 Source Parsing
-
-`SimpleSourceParser` performs lightweight lexical and structural analysis rather than using a complete compiler frontend.
-
-The parser pipeline conceptually consists of:
-
-```text
-source text
-   ↓
-lexical masking
-   ↓
-brace / parenthesis structure analysis
-   ↓
-entity recognition
-   ↓
-CodeEntityInfo[]
-```
-
-The implementation is intentionally compact and has two internal modules:
-
-```text
-source_analysis  # lexical masking, line map, brace/parenthesis pairs
-entity_parser    # functions, types, qualification and exact ranges
-```
-
-`SimpleSourceParser` is the public facade and also validates submitted body
-fragments before they reach `FilePatcher`.
-
-Comments, string literals, character literals, raw string literals, and preprocessor content are masked before structural entity discovery so that syntax-like text inside those regions does not produce false entities.
-
-The v1 parser recognizes:
-
-- free functions;
-- member functions and qualified methods;
-- constructors and destructors;
-- operators and friend operators;
-- constrained functions with parenthesized `requires` clauses;
-- classes;
-- structs;
-- scoped `enum class` declarations.
-
-The parser is intentionally lightweight and is not intended to provide complete C++ grammar coverage.
-
-## 8. `CodeEntityInfo`
-
-Every discovered entity is represented by `CodeEntityInfo`.
-
-The structure stores:
-
-```text
-type
-name
-file path
-entity line range
-body line range
-entity byte range
-body byte range
-```
-
-The most important source coordinates are:
-
-```text
-start_offset
-end_offset
-body_start_offset
-body_end_offset
-```
-
-For example:
-
-```cpp
-int Sum(int a, int b) {
-  return a + b;
-}
-```
-
-Conceptually:
-
-```text
-start_offset
-↓
-int Sum(int a, int b) {
-                       ↑ body_start_offset
-  return a + b;
-}
-↑ body_end_offset / entity end region
-```
-
-These offsets allow masking and patching to operate on exact source ranges without searching again by function or type name. This also avoids ambiguity when overloads or repeated identifiers are present.
-
-## 9. Candidate Selection
-
-After source analysis, `CandidatePicker` filters and ranks the discovered entities.
-
-Two selection modes are supported:
-
-```text
-kFunctionsOnly
-kAll
-```
-
-In `kFunctionsOnly` mode, only entities of type `kFunction` are retained. In `kAll` mode, all supported entity types may participate.
-
-### 9.1 Fixed-Capacity Priority Queue
-
-CppDefense does not sort every discovered entity. Instead, it keeps only the requested top-N candidates using `FixedPriorityQueue<CodeEntityInfo, CandidatePriorityCompare>`.
-
-Candidate strength is measured by `body_line_count()`.
-
-For `M` discovered entities and a requested candidate count `N`, the selection stage has approximately:
-
-```text
-Time:   O(M log N)
-Memory: O(N)
-```
-
-The queue is implemented using standard heap algorithms over an internal `std::vector`. The weakest retained candidate remains at the heap root, allowing a stronger incoming candidate to replace it immediately.
-
-### 9.2 Random Target Selection
-
-Once the top-N candidates are retained, `CandidatePicker` chooses one index using:
-
-```text
-std::mt19937_64
-specified rejection sampling
-```
-
-The default constructor seeds the generator from `std::random_device`. The worker supplies an unsigned 64-bit seed. Candidate ordering uses body size, relative path and byte offset, so the same project, configuration and seed produce the same selection across repeated calls.
-
-## 10. Result File Generation
-
-After an entity is selected, `ResultFile::Create()` creates:
-
-```text
-cache/<session-id>/result.txt
-```
-
-The file contains only instructions and editable body contents. The original
-declaration and outer braces stay in the masked source and cannot be replaced
-through `result.txt`.
-
-Example source:
-
-```cpp
-int Sum(int a, int b) {
-  return a + b;
-}
-```
-
-Generated result template:
-
-```cpp
-// Restore only the body contents for Sum.
-// The declaration and outer braces are preserved by CppDefense.
-```
-
-The user replaces those instructions with body contents. `FilePatcher`
-validates that nested braces remain inside the selected entity, then replaces
-only the bytes between the original outer braces.
-
-## 11. Cached Source Masking
-
-`FileMasker` removes the selected entity implementation from the cached project.
-
-The implementation is not physically shortened. Instead, characters inside the entity body are replaced with spaces while newline characters are preserved.
-
-Example:
-
-```cpp
-int Sum(int a, int b) {
-  return a + b;
-}
-```
-
-becomes conceptually:
-
-```cpp
-int Sum(int a, int b) {
-               
-}
-```
-
-This design preserves the following invariants:
-
-```text
-file byte size remains unchanged
-line endings remain unchanged
-line numbers remain stable
-subsequent byte offsets remain stable
-opening and closing body braces remain present
-```
-
-The stored `CodeEntityInfo` offsets can therefore continue to identify the same region after masking.
-
-## 12. Defense Timer
-
-`DefenseTimer` uses `std::chrono::steady_clock`.
-
-A monotonic clock is used because defense duration must not depend on wall-clock changes.
-
-At start time:
-
-```text
-deadline = current steady time + configured duration
-```
-
-The timer provides:
-
-```text
-Start()
-Stop()
-running()
-expired()
-remaining()
-```
-
-The v1 CLI checks expiration when commands are processed. It does not use a background thread to interrupt terminal input.
-
-## 13. Check Workflow
-
-`DefenseSession::Check()` validates the current contents of `result.txt`.
-
-The check pipeline is:
-
-```text
-verify active session and timer
-        ↓
-read result.txt
-        ↓
-create temporary check workspace
-        ↓
-patch submitted entity
-        ↓
-configure project
-        ↓
-build project
-        ↓
-run tests
-        ↓
-update session state and report
-```
-
-## 14. Temporary Check Workspace
-
-`CheckWorkspace` creates an isolated temporary directory under:
-
-```text
-cache/<session-id>/check/
-```
-
-The masked cached project is copied into that directory before every check.
-
-The model is therefore:
-
-```text
-original project
-      │
-      └─ never modified
-
-cached project
-      │
-      └─ permanent masked copy for the active session
-
-result.txt
-      │
-      └─ user submission
-
-check project
-      │
-      └─ temporary copy containing the submitted implementation
-```
-
-This separation is a central system invariant. User-written C++ code is never inserted into the permanent masked cache.
-
-### 14.1 RAII Cleanup
-
-`DefenseSession` uses a local `CheckWorkspaceGuard` to clean the temporary check workspace.
-
-The guard owns cleanup responsibility for the duration of `Check()` and calls `CheckWorkspace::Cleanup()` in its destructor.
-
-This ensures that cleanup is performed for normal returns and early error returns without requiring repeated manual cleanup calls.
-
-## 15. Solution Patching
-
-`FilePatcher` inserts the submitted code into the temporary check project.
-
-The component first computes the source file path relative to the permanent cached project. It then maps that relative path into the temporary check project.
-
-The selected source range is replaced using:
-
-```text
-[start_offset, end_offset)
-```
-
-with the complete contents of `result.txt`.
-
-Because patching is performed only in the temporary check copy, the masked project remains unchanged after every attempt.
-
-## 16. Build and Test Execution
-
-`BuildRunner` currently supports CMake projects.
-
-A check consists of three independent build stages.
-
-### 16.1 Configure
-
-```bash
-cmake -S <project> -B <build> -DCMAKE_BUILD_TYPE=Release
-```
-
-### 16.2 Build
-
-```bash
-cmake --build <build> --config Release
-```
-
-### 16.3 Tests
-
-```bash
-ctest --test-dir <build> --build-config Release --output-on-failure
-```
-
-Each stage produces a `BuildStepResult` containing:
-
-```text
-whether the step was attempted
-whether it succeeded
-whether it timed out
-exit code
-captured output
-```
-
-`BuildResult` contains separate configure, build, and test results.
-
-If configure fails, build and tests are skipped. If build fails, tests are skipped. A defense attempt is successful only when all three stages succeed.
-
-### 16.4 Log Capture
-
-The process implementation invokes CMake and CTest directly without a command
-shell. Arguments are passed separately, output is redirected to log files, and
-the complete child process group/job is terminated when the defense deadline
-is reached.
-
-Logs are stored under:
-
-```text
-cache/<session-id>/logs/configure.log
-cache/<session-id>/logs/build.log
-cache/<session-id>/logs/tests.log
-```
-
-The files are then read back into `BuildStepResult::output` for CLI reporting and final result generation.
-
-## 17. Retry Semantics
-
-A failed configure, build, or test stage does not automatically terminate the defense.
-
-The behavior is:
-
-```text
-Check attempt
-   ↓
-configure/build/tests failed
-   ↓
-attempt counter incremented
-   ↓
-status returns to Active
-   ↓
-user edits result.txt
-   ↓
-new Check attempt
-```
-
-This cycle may continue until either:
-
-- the submitted implementation passes configure, build, and tests; or
-- the defense timer expires.
-
-## 18. Timeout Semantics
-
-Expiration is checked before a new check begins and again after build execution.
-
-The second check is important because a configure/build/test cycle may itself consume the remaining defense time.
-
-If the timer expires during build execution, the session becomes `kExpired` even if the resulting code eventually builds successfully.
-
-## 19. Final Defense Result
-
-When a defense reaches a terminal state, `DefenseResultWriter` creates:
-
-```text
-cache/<session-id>/defense_result.txt
-```
-
-`DefenseResult` contains:
-
-```text
-selected entity
-final status
-attempt count
-elapsed time
-last build/test log
-```
-
-Typical terminal states are:
-
-```text
-kSuccess
-kFailed
-kExpired
-kError
-```
-
-If the user explicitly finishes an active defense before success, the session is recorded as failed.
-
-## 20. Runtime Workspace Layout
-
-For a project named `labwork_simple`, the active session is organized as follows:
-
-```text
-cache/<session-id>/
-├── project/
-│   └── labwork_simple/       # persistent masked copy
-├── logs/
-│   ├── configure.log
-│   ├── build.log
-│   └── tests.log
-├── metadata/
-├── result.txt                # user-edited submission
-└── defense_result.txt        # final session report
-```
-
-During a check, the following temporary structure is added:
-
-```text
-cache/<session-id>/check/
-├── project/
-│   └── labwork_simple/       # patched temporary copy
-└── build/                    # temporary CMake build directory
-```
-
-The entire `check/` directory is removed after the attempt.
-
-## 21. Core Invariants
-
-The v1 architecture is based on several invariants that should be preserved by future changes.
-
-### 21.1 Original-project isolation
-
-The original user project must never be modified by defense operations.
-
-### 21.2 Masked-cache isolation
-
-The permanent cached project must remain masked after `Start()`. User submissions must not be written into this copy.
-
-### 21.3 Submission isolation
-
-`result.txt` is the user-controlled source of the restored entity during an active defense.
-
-### 21.4 Temporary validation
-
-Submitted code is compiled and tested only after being inserted into a disposable check workspace.
-
-### 21.5 Stable parser coordinates
-
-Masking must preserve byte size and line endings so that previously calculated entity offsets remain valid.
-
-### 21.6 Explicit error propagation
-
-Recoverable operations return typed `std::expected<Result, Error>` values rather than relying on implicit failure state.
-
-## 22. C++ Concepts Demonstrated by the Implementation
-
-The project intentionally applies several modern C++ concepts in production-style code.
-
-### 22.1 RAII
-
-RAII is used by standard stream objects and by `CheckWorkspaceGuard`, which owns cleanup of the temporary validation workspace.
-
-### 22.2 Move Semantics
-
-Paths, error values, prepared projects, and candidate queues are moved where ownership transfer is appropriate.
-
-### 22.3 `std::expected`
-
-Filesystem, parsing, selection, build, and session operations use explicit success-or-error contracts.
-
-### 22.4 `std::optional`
-
-`DefenseSession` uses optional values for state that does not exist before session initialization, including the selected entity and workspace.
-
-### 22.5 Templates and Generic Algorithms
-
-`FixedPriorityQueue<T, Compare>` demonstrates a class template with a configurable comparator and uses `std::push_heap` and `std::pop_heap` internally.
-
-### 22.6 Random Number Generation
-
-Candidate selection uses `std::mt19937_64` and specified rejection sampling, with deterministic unsigned 64-bit seeding for worker calls and tests.
-
-### 22.7 `std::filesystem`
-
-Workspace preparation, source discovery, temporary-copy creation, path mapping, and cleanup are implemented using `std::filesystem`.
-
-### 22.8 `std::chrono`
-
-Defense timing is implemented with `std::chrono::steady_clock` and explicit duration types.
-
-### 22.9 Composition
-
-`DefenseSession` coordinates specialized components rather than inheriting from them. This keeps responsibilities narrow and allows infrastructure implementations to evolve independently.
-
-## 23. Extensibility
-
-The current architecture provides clear extension points.
-
-Potential future changes include:
-
-- additional build-system implementations behind the build execution boundary;
-- a richer parser or AST-based source analyzer;
-- session persistence across application restarts;
-- a web or graphical user interface reusing the application layer;
-- richer terminal progress and countdown display;
-- configurable build and test commands;
-- session history and statistics.
-
-The principal requirement for future extensions is that the core defense rules remain independent of the user-interface implementation and that the original-project and masked-cache isolation guarantees remain intact.
-
-## 24. End-to-End Execution Summary
-
-The complete v1 flow can be summarized as follows.
-
-### Start
-
-```text
-selected project
-      ↓
-WorkspaceCache
-      ↓
-ProjectScanner
-      ↓
-SourceFileRepository
-      ↓
-SimpleSourceParser
-      ↓
-CodeEntityInfo[]
-      ↓
-CandidatePicker
-      ↓
-selected entity
-      ├─ ResultFile → result.txt
-      └─ FileMasker → masked cached project
-      ↓
-DefenseTimer starts
-```
+| Entity | Important invariant |
+|---|---|
+| `users` | Active accounts have one role and a stable identity. |
+| `student_records` | A record belongs to one group and is claimed by at most one user. |
+| `submission_versions` | Student + lab versions are ordered and immutable. |
+| `defenses` | A defense stays bound to the submission version it started with. |
+| `check_attempts` | Attempts are append-only and evaluated against the deadline. |
+| `runner_jobs` | Only the current valid lease can complete a job. |
+| `audit_events` | Security-relevant mutations extend the hash chain. |
+
+## Storage
+
+Object keys contain a namespace, UUID, and extension—never a name, login, or
+other personal data. The main namespaces are:
+
+- `original-archives/` for teacher uploads;
+- `normalized-submissions/` for immutable project versions;
+- `safe-logs/` for bounded, sanitized runner output.
+
+Writes calculate SHA-256 while streaming. Submission versions are immutable in
+PostgreSQL, and identical content for the same student and lab is deduplicated.
+The `reconcile-storage` command reports missing, orphaned, and mismatched objects
+without deleting data.
+
+| Value | Format | Secret |
+|---|---|---|
+| Domain, request, session, and job IDs | lowercase UUIDv7 | No |
+| Lease token | 32 random bytes, unpadded base64url | Yes |
+| Idempotency key | UUIDv4 or UUIDv7 | No |
+| OAuth `state` and PKCE verifier | at least 32 random bytes, base64url | Yes, short-lived |
+| Worker seed | unsigned 64-bit decimal string | No |
+| SHA-256 in APIs | 64 lowercase hexadecimal characters | No |
+
+## State and concurrency rules
+
+Every transition is performed by one application command in a PostgreSQL
+transaction. An unspecified transition is rejected as a conflict.
 
 ### Defense
 
-```text
-user edits result.txt
-        +
-DefenseTimer remains active
+```mermaid
+stateDiagram-v2
+  [*] --> ready
+  ready --> preparing
+  preparing --> active
+  preparing --> error
+  active --> passed
+  active --> failed
+  active --> expired
+  active --> error
+  ready --> cancelled
+  preparing --> cancelled
+  active --> cancelled
+  error --> ready: audited recovery
+  passed --> [*]
+  failed --> [*]
+  expired --> [*]
+  cancelled --> [*]
 ```
 
-### Check
+### Runner job
 
-```text
-result.txt
-    ↓
-CheckWorkspace
-    ↓
-FilePatcher
-    ↓
-BuildRunner
-    ├─ configure
-    ├─ build
-    └─ CTest
-    ↓
-pass / retry / timeout
-    ↓
-DefenseResultWriter
+```mermaid
+stateDiagram-v2
+  [*] --> queued
+  queued --> leased
+  leased --> running
+  leased --> queued: lease expired
+  running --> completed
+  running --> retry_wait: infrastructure failure
+  retry_wait --> queued: backoff elapsed
+  retry_wait --> dead: retries exhausted
+  running --> timed_out
+  queued --> cancelled
+  leased --> cancelled
+  running --> cancelled
+  completed --> [*]
+  dead --> [*]
+  timed_out --> [*]
+  cancelled --> [*]
 ```
 
-The defining operational rule of CppDefense v1 is therefore:
+| Event | Required checks |
+|---|---|
+| Start defense | Version exists; no conflicting active defense. |
+| Accept attempt | Attempt was submitted before the deadline. |
+| Lease job | Capacity exists; lease creation is atomic. |
+| Complete job | Runner, token, lease expiry, job version, and state all match. |
+| Retry job | Error is infrastructure-retryable and attempts remain. |
+| Reopen defense | Create a new record linked to the immutable terminal defense. |
 
-```text
-original project  → never modified
-cached project    → permanently masked during the session
-result.txt        → user submission
-check project     → disposable validation copy
+- Import, defense, user, and runner-job states change only through explicit
+  transitions.
+- Submission versions and completed defenses are immutable.
+- Queue leases are atomic, time-limited, and bound to a hashed random token.
+- Completion verifies the job, runner, lease, attempt, and expected state.
+- Audit events form an append-only hash chain.
+- Database migrations are forward-only, embedded in the backend binary, and
+  protected by an advisory lock and stored checksum.
+
+## Security boundaries
+
+```mermaid
+flowchart LR
+  Internet((Internet)) --> Edge[Cloudflare / edge]
+  GitHub[GitHub OAuth] --> Edge
+  Edge --> Backend[Backend VM]
+  Backend --> DB[(PostgreSQL)]
+  Backend --> Store[(S3 / MinIO)]
+  Backend -->|authenticated runner API| Runner[Runner VM]
+  Runner --> Container[Untrusted container]
 ```
 
-## 25. CppDefense 2.0 Core and Headless Worker
+Browser input, archives, projects, OAuth data, and runner responses are
+untrusted. ZIP extraction rejects traversal, links, devices, encrypted entries,
+nested archives, path collisions, and configured resource-limit violations.
 
-The Stage 1 build separates four link targets:
+Student projects may execute arbitrary CMake and native code. Production checks
+must therefore run on a separate machine in a disposable, non-root container
+with no network, no service secrets, a read-only root filesystem, and strict
+CPU, memory, process, disk, time, and log limits. Container isolation is not
+treated as a perfect boundary.
 
-```text
-cpp-defense-core
-   ├── cpp-defense-infrastructure ── cpp-defense-ui ── cpp-defense CLI
-   └── cpp-defense-infrastructure ── worker adapter ── cpp-defense-worker
-```
+| Risk | Mandatory control |
+|---|---|
+| Cross-user data access | Object-scoped authorization in service and SQL layers. |
+| ZIP traversal or resource exhaustion | Canonical paths, entry restrictions, streaming limits, and quotas. |
+| Stale or duplicate runner result | Atomic leases, hashed tokens, expiry, and idempotent completion. |
+| Host compromise by student code | Separate runner machine and disposable hardened container. |
+| Network or secret exfiltration | No container network, credentials, host mounts, or shared workspaces. |
+| Object/database inconsistency | Content hashes, immutable versions, reconciliation, and restore tests. |
+| Sensitive logs | Allowlisted structured metadata, truncation, redaction, and protected access. |
 
-`cpp-defense-core` owns parsing, candidate ordering and selection, timer logic,
-and content hashing. It does not depend on the CLI or JSON. Compatibility
-headers preserve the v1 include paths while the CLI and worker use the same
-implementations.
-
-`cpp-defense-worker` processes one UTF-8 JSON request from stdin, writes one
-JSON response to stdout, and exits. Its protocol is versioned independently in
-`contracts/worker/v1`. The commands are:
-
-- `analyze_project` — return supported function candidates;
-- `prepare_defense` — calculate deterministic top-N candidates and persist
-  the selected function for the supplied seed;
-- `materialize_attempt` — copy the immutable input project and replace only
-  the selected function body.
-
-Runner creates the session root before invocation:
-
-```text
-<runner-workspace>/
-└── <session-id>/
-    ├── project/                 # immutable input for worker calls
-    ├── defense-state.json       # persisted preparation result
-    └── attempts/
-        └── <attempt>/           # materialized output
-```
-
-All request paths are relative to that session. The worker rejects parent
-traversal, absolute paths, backslashes, symlinks, hard links and special files.
-A per-session lock prevents concurrent mutation. Staging directories are
-removed after errors; successful output is committed by rename. The worker
-does not configure, build, test or execute the student project.
+See [`SECURITY.md`](../SECURITY.md) for vulnerability reporting and operational
+security requirements.

@@ -15,7 +15,7 @@ JSON Schema validation is only the first validation layer. Backend must addition
 - configured compressed/uncompressed/file-count/ratio limits;
 - group, lab and teacher permissions;
 - root `CMakeLists.txt` and at least one C/C++ source;
-- atomic review and apply rules from requirements 1.4.
+- immutable storage and atomic review/apply rules described in the architecture.
 
 `$id` uses a reserved example hostname until the canonical public project domain is chosen. Release CI may replace it only through an explicit contract version update.
 

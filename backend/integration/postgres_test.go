@@ -42,8 +42,15 @@ func TestMigrationsAreRepeatable(t *testing.T) {
 	if err := db.Pool().QueryRow(context.Background(), "select count(*) from cppdefense_schema_migrations").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
+	if count != 3 {
 		t.Fatalf("migration count = %d", count)
+	}
+	var legacyTable *string
+	if err := db.Pool().QueryRow(context.Background(), "select to_regclass('public.legacy_telegram_identities')::text").Scan(&legacyTable); err != nil {
+		t.Fatal(err)
+	}
+	if legacyTable == nil {
+		t.Fatal("legacy Telegram identity data was not retained")
 	}
 }
 

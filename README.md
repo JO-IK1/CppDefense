@@ -92,20 +92,13 @@ Current scope:
 
 ## Documentation
 
-- [Usage guide](docs/USAGE.md) — requirements, building, launching, commands
-  and the complete user workflow;
-- [Architecture](docs/ARCHITECTURE.md) — internal processing pipeline, state
-  transitions, parser design and system invariants;
-- [Learning map](docs/LEARNING.md) — C++ concepts demonstrated by each module;
-- [Roadmap](docs/ROADMAP.md) — completed scope and possible future work;
-- [Release guide](docs/RELEASING.md) — packaging and release checklist.
-- [CppDefense 2.0 requirements](docs/REQUIREMENTS_2.0.md) and
-  [development plan](docs/DEVELOPMENT_PLAN_2.0.md);
-- [Stage 1 readiness report](docs/STAGE_1_REPORT.md);
-- [Stage 2 readiness report](docs/STAGE_2_REPORT.md) and
-  [Go Backend guide](backend/README.md);
-- [Stage 3 storage report](docs/STAGE_3_REPORT.md);
-- [Worker protocol](contracts/worker/v1/README.md) and its JSON Schemas.
+- [Usage](docs/USAGE.md) — build and use the local CLI.
+- [Architecture](docs/ARCHITECTURE.md) — components, data flow, invariants, and
+  security boundaries.
+- [Go backend](backend/README.md) — local setup, storage, migrations, and tests.
+- [Contracts](contracts/README.md) — versioned ZIP, HTTP, and worker interfaces.
+- [Roadmap](docs/ROADMAP.md) — implemented scope and next milestones.
+- [Security policy](SECURITY.md) and [release guide](docs/RELEASING.md).
 
 ## License
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CppDefense API
-  version: 1.0.0
+  version: 1.1.0
   summary: Public application and private runner contracts for CppDefense 2.0
   license:
     name: Proprietary source-available
@@ -82,51 +82,6 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/auth/telegram/start:
-    get:
-      tags: [Auth]
-      operationId: startTelegramLogin
-      parameters:
-        - $ref: '#/components/parameters/ReturnTo'
-      responses:
-        '302':
-          description: Redirect to Telegram OIDC authorization endpoint
-          headers:
-            Location:
-              schema:
-                type: string
-                format: uri
-  /api/v1/auth/telegram/callback:
-    get:
-      tags: [Auth]
-      operationId: completeTelegramLogin
-      parameters:
-        - name: code
-          in: query
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 4096
-        - name: state
-          in: query
-          required: true
-          schema:
-            type: string
-            minLength: 32
-            maxLength: 512
-      responses:
-        '302':
-          description: Login completed; redirect to application or pending screen
-          headers:
-            Location:
-              schema:
-                type: string
-                format: uri-reference
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '409':
-          $ref: '#/components/responses/Conflict'
   /api/v1/auth/logout:
     post:
       tags: [Auth]
@@ -154,49 +109,6 @@ paths:
                 $ref: '#/components/schemas/User'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v1/me/identities/{provider}:
-    post:
-      tags: [Profile]
-      operationId: startIdentityLink
-      security:
-        - cookieAuth: []
-          csrfToken: []
-      parameters:
-        - $ref: '#/components/parameters/IdentityProvider'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      responses:
-        '202':
-          description: Full provider authorization flow started
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [authorization_url]
-                properties:
-                  authorization_url:
-                    type: string
-                    format: uri
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
-    delete:
-      tags: [Profile]
-      operationId: unlinkIdentity
-      security:
-        - cookieAuth: []
-          csrfToken: []
-      parameters:
-        - $ref: '#/components/parameters/IdentityProvider'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      responses:
-        '204':
-          description: Identity unlinked; last identity cannot be removed
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
   /api/v1/groups:
     get:
       tags: [Groups]
@@ -828,12 +740,6 @@ components:
         type: string
         maxLength: 2048
         pattern: '^/(?!/).*$'
-    IdentityProvider:
-      name: provider
-      in: path
-      required: true
-      schema:
-        enum: [github, telegram]
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -999,7 +905,7 @@ components:
             required: [provider, subject, verified_at]
             properties:
               provider:
-                enum: [github, telegram]
+                const: github
               subject:
                 type: string
               login:

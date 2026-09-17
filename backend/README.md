@@ -1,26 +1,25 @@
-# CppDefense Go Backend
+# Go backend
 
-Backend предоставляет HTTP API process, PostgreSQL pool, forward-only
-миграции, server-side session primitives, CSRF token primitives, request ID,
-единые problem details, JSON-логи, audit chain, health checks и приватное
-файловое хранилище для архивов лабораторных.
+The backend provides HTTP infrastructure, PostgreSQL migrations, server-side
+sessions, CSRF primitives, structured errors and logs, an audit chain, health
+checks, and private storage for project archives.
 
-## Локальный запуск
+## Run locally
 
-Требуются Go 1.27.1 и Docker с Compose v2.
+Requirements: Go 1.27.1 and Docker Compose v2.
 
 ```sh
 docker compose -f backend/compose.yaml up -d
 cp backend/.env.example backend/.env
 ```
 
-Замените оба `REPLACE_...` независимыми секретами. Секрет можно получить так:
+Replace both `REPLACE_...` values with independent secrets. Generate one with:
 
 ```sh
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 ```
 
-Из каталога `backend` экспортируйте переменные и запустите приложение:
+Then run from `backend/`:
 
 ```sh
 set -a
@@ -31,55 +30,37 @@ go run ./cmd/cppdefense healthcheck
 go run ./cmd/cppdefense api
 ```
 
-При `CPPDEFENSE_AUTO_MIGRATE=true` команда `api` сама подготавливает чистую
-базу. Отдельная команда `migrate` нужна для production-развёртывания, где
-изменение схемы обычно выполняют до переключения приложения.
+`CPPDEFENSE_AUTO_MIGRATE=true` lets `api` prepare a new database. Production
+deployments should run `migrate` before switching application versions.
 
-Проверка процесса: `GET http://127.0.0.1:8080/health/live`. Проверка базы,
-миграций и object storage: `GET http://127.0.0.1:8080/health/ready`.
+- Liveness: `GET http://127.0.0.1:8080/health/live`
+- Database and storage readiness: `GET http://127.0.0.1:8080/health/ready`
 
-## Хранилище лабораторных
+## Storage
 
-В `.env.example` включён S3-режим, который использует локальный MinIO из
-Compose. Bucket создаётся без публичной policy. В object key находится только
-namespace, UUID и расширение — логины, ФИО и другие персональные данные не
-используются.
+The example environment uses the private MinIO service from Compose. Set
+`CPPDEFENSE_STORAGE_MODE=local` to store owner-only files under
+`./var/objects` without MinIO.
 
-- `original-archives/` хранит исходные ZIP преподавателя;
-- `normalized-submissions/` хранит неизменяемые нормализованные проекты;
-- `safe-logs/` зарезервирован для очищенных логов runner.
-
-Для быстрых unit-тестов или разработки без MinIO установите
-`CPPDEFENSE_STORAGE_MODE=local`. Файлы попадут в `./var/objects` с правами
-только для владельца процесса.
-
-Сверка БД и хранилища запускается командой:
+Check database/object consistency with:
 
 ```sh
 go run ./cmd/cppdefense reconcile-storage
 ```
 
-Она сообщает о ссылках на отсутствующие объекты, лишних объектах и ошибках
-SHA-256. Команда ничего автоматически не удаляет.
+The command reports missing, orphaned, and checksum-mismatched objects; it does
+not delete anything. PostgreSQL and MinIO use persistent Compose volumes, so
+avoid `docker compose down -v` when their data must be retained.
 
-## Тесты
+## Tests
 
 ```sh
 go test ./...
 ```
 
-Интеграционные тесты включаются переменной
-`CPPDEFENSE_TEST_DATABASE_URL` и `CPPDEFENSE_TEST_S3_ENDPOINT`. Они повторно
-запускают мигратор, проверяют ограничения БД и выполняют round-trip через
-приватный S3 bucket.
+Set `CPPDEFENSE_TEST_DATABASE_URL` and `CPPDEFENSE_TEST_S3_ENDPOINT` to enable
+the PostgreSQL and S3 integration tests. CI supplies both services.
 
-Compose использует persistent volumes `cppdefense-postgres` и
-`cppdefense-minio`. Обычные stop/start и `docker compose down` сохраняют
-данные. Не используйте `docker compose down -v`, если данные нужны.
-
-## Миграционная политика
-
-Миграции встроены в бинарный файл, выполняются по одной транзакции и защищены
-PostgreSQL advisory lock. Уже применённый SQL нельзя редактировать: мигратор
-сверяет SHA-256. Исправления выпускаются новой forward migration; production
-downgrade не обещается.
+Migrations are embedded, forward-only, transactional, checksum-verified, and
+serialized with a PostgreSQL advisory lock. Never edit an applied migration;
+add a new one instead.

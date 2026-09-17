@@ -1,194 +1,92 @@
-# Using CppDefense
+# Local CLI usage
 
-This guide covers installation, CLI commands and the complete defense workflow.
-For implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
+CppDefense turns a trusted CMake project into a timed code-restoration exercise.
+It builds and runs the selected project's code, so do not use the local CLI with
+untrusted projects.
 
-## Requirements
+## Requirements and build
 
-- a C++23 compiler for building CppDefense;
-- CMake 3.20 or newer;
-- CTest, which is included with CMake;
-- a trusted CMake-based C or C++ project with tests.
+- C++23 compiler
+- CMake 3.20 or newer, including CTest
+- a CMake-based C or C++ project with tests
 
-CppDefense configures, builds and executes the selected project's tests. Do not
-use it with untrusted projects.
-
-## Build
-
-From the repository root:
-
-```bash
+```sh
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The executable is created at `build/cpp-defense` on single-config generators.
-Multi-config generators may place it under `build/Debug` or `build/Release`.
+Single-config generators create `build/cpp-defense`; multi-config generators
+may place it under `build/Debug` or `build/Release`.
 
-To create a platform archive containing the executable, license and docs:
+## Start
 
-```bash
-cmake --build build --target package
-```
-
-## Launch
-
-Start without a selected project:
-
-```bash
-./build/cpp-defense
-```
-
-Or provide the project and initial settings immediately:
-
-```bash
+```sh
 ./build/cpp-defense ./examples/labwork_simple -n 5 -t 10
 ```
 
-Startup options:
+Options:
 
 ```text
--p, --path <directory>     Select a project directory
--n, --functions <count>    Candidate count from 1 to 50
--t, --timer <minutes>      Timer from 1 to 180 minutes
-    --functions-only       Select only functions (default)
-    --all                  Allow every supported entity type
--h, --help                 Show help
+-p, --path <directory>     project directory
+-n, --functions <count>    candidate count (1–50)
+-t, --timer <minutes>      time limit (1–180)
+    --functions-only       select functions only (default)
+    --all                  allow every supported entity type
+-h, --help                 show help
 ```
 
-The project may also be passed as the first positional argument.
+The project path may be the first positional argument.
 
-## Interactive commands
+## Defense workflow
 
-```text
-start, -s, --start         Start or restart a defense session
-check, build, -c, --check  Check the current result.txt
-info, i                    Show the selected entity and paths
-time                       Show remaining time
--p, --path <directory>     Change the selected project
--n, --functions <count>    Change the candidate count
--t, --timer <minutes>      Change the timer
-    --functions-only       Select only functions
-    --all                  Allow all supported entities
-help, -h, --help           Show help
-quit, q, -e, --exit        Finish the session and exit
-```
+At the interactive prompt, use `start` to create a session. CppDefense copies
+the project, selects an entity, masks its implementation, creates `result.txt`,
+and starts the timer.
 
-## Start a defense
-
-After choosing a project, run:
-
-```text
-> start
-```
-
-CppDefense then:
-
-1. creates an isolated session workspace;
-2. copies the project without modifying the original;
-3. discovers and parses supported source files;
-4. retains the requested number of largest candidates;
-5. randomly selects one entity;
-6. masks its implementation in the cached copy;
-7. creates `result.txt` and starts the timer.
-
-The CLI prints the selected entity, cached project path, editable result path,
-final report path and remaining time.
-
-## Restore the body
-
-`result.txt` contains instructions similar to:
-
-```cpp
-// Restore only the body contents for CalculateStatistics.
-// The declaration and outer braces are preserved by CppDefense.
-```
-
-Replace those lines with only the contents that belong between the original
-outer braces. For a function, an answer might be:
+Edit `result.txt` with only the contents that belong inside the original outer
+braces. Do not repeat the declaration or the braces. For example:
 
 ```cpp
 return first + second;
 ```
 
-Do not repeat the function signature or add the outer `{}`. CppDefense checks
-the fragment's brace and parenthesis structure before applying it.
+Use `check` to create a temporary project, insert the answer, configure and
+build it, and run CTest. A failed attempt leaves the session active until the
+deadline. A successful test run completes it. `quit` or end-of-file finalizes
+an unfinished session as failed.
 
-The masked cached source can be inspected when the original declaration is
-needed. Its location is shown by `info`.
-
-## Check an answer
-
-Run:
+Useful commands:
 
 ```text
-> check
+start                    start or restart the defense
+check                    validate result.txt
+info                     show the entity and workspace paths
+time                     show remaining time
+help                     show all commands
+quit                     save and exit
 ```
 
-The application creates a temporary copy, inserts the submitted body and runs:
+## Workspace and results
 
-```text
-CMake configure → build → CTest
-```
+The runtime root is `%LOCALAPPDATA%/CppDefense` on Windows,
+`~/Library/Caches/CppDefense` on macOS, and `$XDG_CACHE_HOME/cpp-defense` (or
+`~/.cache/cpp-defense`) on other Unix systems. Override it with
+`CPP_DEFENSE_HOME`.
 
-Possible outcomes:
-
-- configure, build or tests fail — logs are printed and the session remains
-  active for another attempt;
-- every stage succeeds — the defense finishes with `success`;
-- the deadline is reached — the running process tree is terminated and the
-  defense finishes with `expired`;
-- the user exits before success — the defense finishes with `failed`.
-
-Closing standard input with EOF also finalizes and saves an active session.
-
-## Runtime workspace
-
-The default runtime root is:
-
-- Windows: `%LOCALAPPDATA%/CppDefense`;
-- macOS: `~/Library/Caches/CppDefense`;
-- other Unix systems: `$XDG_CACHE_HOME/cpp-defense`, falling back to
-  `~/.cache/cpp-defense`.
-
-Set `CPP_DEFENSE_HOME` to use an explicit directory.
-
-For a project named `labwork_simple`, the active session looks like:
+Each session has this layout:
 
 ```text
 cache/<session-id>/
-├── project/
-│   └── labwork_simple/       # masked session copy
-├── logs/
-│   ├── configure.log
-│   ├── build.log
-│   └── tests.log
+├── project/              masked project copy
+├── logs/                 configure, build, and test logs
 ├── metadata/
-├── result.txt                # editable body
-└── defense_result.txt        # final report
+├── result.txt            editable answer
+└── defense_result.txt    final status and report
 ```
 
-During `check`, `cache/<session-id>/check/` is created and removed automatically.
+The temporary `check/` directory is recreated for each attempt. The final report
+records the selected entity, attempts, elapsed time, status, and latest bounded
+logs. The original project is never modified.
 
-## Result report
-
-`defense_result.txt` contains:
-
-- the selected entity and source file;
-- attempt count;
-- elapsed defense time;
-- final status;
-- the most recent configure/build/test output.
-
-Elapsed time is frozen when the session reaches a final state, so reopening or
-resaving the report does not change the recorded duration.
-
-## Example project
-
-The repository includes `examples/labwork_simple`, a standalone CMake project
-intended for manual smoke testing:
-
-```bash
-./build/cpp-defense ./examples/labwork_simple -n 5 -t 10
-```
+For implementation and isolation details, see [Architecture](ARCHITECTURE.md).
