@@ -24,10 +24,25 @@
     </section>
     <section class="defense-panel">
       <div class="wheel-column"><p class="eyebrow">Случайный выбор</p><div class="function-wheel is-selected" aria-label="Колесо выбора функции"><div class="function-wheel__face"><span>Matrix::operator*()</span></div></div><p class="wheel-status">src/matrix.cpp:48–67</p><p class="timer">Осталось 14:32</p></div>
-      <div class="editor-column"><div class="section-heading"><div><p class="eyebrow">Ответ</p><h2>Тело функции</h2></div><span>Без внешних скобок</span></div><textarea rows="16" spellcheck="false" placeholder="Введите реализацию функции…">Matrix result(rows_, other.cols_);
+      <div class="workspace-column"><div class="section-heading"><div><p class="eyebrow">Файл задания</p><h2>src/matrix.cpp</h2></div><span>Тело выбранной функции скрыто</span></div><div class="code-workspace"><section class="source-pane"><div class="pane-title"><span>Контекст проекта</span><span>только чтение</span></div><pre class="source-code"><code>#include "matrix.hpp"
+
+Matrix::Matrix(std::size_t rows, std::size_t cols)
+    : rows_(rows), cols_(cols), data_(rows * cols) {}
+
+double&amp; Matrix::at(std::size_t row, std::size_t col) {
+    return data_[row * cols_ + col];
+}
+
+Matrix Matrix::operator*(const Matrix&amp; other) const {
+    /* TODO: restore function body */
+}
+
+bool Matrix::empty() const {
+    return data_.empty();
+}</code></pre></section><section class="editor-column"><div class="pane-title"><span>Ваш ответ</span><span>без внешних скобок</span></div><textarea rows="20" spellcheck="false" placeholder="Введите реализацию функции…">Matrix result(rows_, other.cols_);
 for (std::size_t i = 0; i &lt; rows_; ++i) {
     // Продолжите реализацию…
-}</textarea><div class="actions"><button class="secondary-button">Сохранить черновик</button><button>Отправить на проверку</button><button class="danger-button">Отменить</button></div></div>
+}</textarea><div class="actions"><button class="secondary-button">Сохранить черновик</button><button>Отправить на проверку</button><button class="danger-button">Отменить</button></div></section></div></div>
     </section>
   </main>
   <footer>CppDefense 2.0 <span>·</span> UI preview</footer>

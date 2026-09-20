@@ -79,6 +79,37 @@ Json Candidate(const CodeEntityInfo& entity, const std::string& source) {
           {"original_body_sha256", Sha256(body)}};
 }
 
+std::string MaskedSource(const CodeEntityInfo& entity,
+                         const std::string& source) {
+  Require(entity.body_start_offset + 1 <= entity.body_end_offset - 1 &&
+              entity.body_end_offset <= source.size(),
+          "INVALID_RANGE", "Invalid selected body range");
+  std::string masked = source;
+  constexpr std::string_view marker = "/* TODO */";
+  for (std::size_t i = entity.body_start_offset + 1;
+       i < entity.body_end_offset - 1; ++i) {
+    if (masked[i] == '\n' || masked[i] == '\r') continue;
+    masked[i] = ' ';
+  }
+  for (std::size_t i = entity.body_start_offset + 1;
+       i < entity.body_end_offset - 1;) {
+    if (masked[i] == '\n' || masked[i] == '\r') {
+      ++i;
+      continue;
+    }
+    const auto begin = i;
+    while (i < entity.body_end_offset - 1 && masked[i] != '\n' &&
+           masked[i] != '\r') {
+      ++i;
+    }
+    if (i - begin >= marker.size()) {
+      std::copy(marker.begin(), marker.end(), masked.begin() + begin);
+      break;
+    }
+  }
+  return masked;
+}
+
 bool ContainsPath(const fs::path& parent, const fs::path& child) {
   auto a = parent.begin();
   auto b = child.begin();
@@ -164,8 +195,12 @@ Json Execute(const fs::path& workspace, const Json& r) {
     const auto& entity = choice->candidates[i];
     candidates.push_back(Candidate(entity, analysis.sources.at(entity.file_path)));
   }
-  const Json result{{"candidates", candidates}, {"selected_index", choice->selected_index},
-                    {"selected_function", candidates.at(choice->selected_index)}};
+  const auto& selected = choice->candidates[choice->selected_index];
+  const Json result{
+      {"candidates", candidates},
+      {"selected_index", choice->selected_index},
+      {"selected_function", candidates.at(choice->selected_index)},
+      {"masked_source", MaskedSource(selected, analysis.sources.at(selected.file_path))}};
   const auto key = Sha256(p.dump() + analysis.fingerprint);
   const auto state_path = Resolve(session, "defense-state.json", false);
   if (fs::exists(state_path)) {

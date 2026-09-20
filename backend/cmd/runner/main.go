@@ -161,6 +161,7 @@ func (a *agent) execute(parent context.Context, lease postgres.Lease) error {
 			Result struct {
 				Candidates    []postgres.Candidate `json:"candidates"`
 				SelectedIndex int                  `json:"selected_index"`
+				MaskedSource  string               `json:"masked_source"`
 			} `json:"result"`
 			Error any `json:"error"`
 		}
@@ -170,7 +171,7 @@ func (a *agent) execute(parent context.Context, lease postgres.Lease) error {
 		if response.Status != "ok" {
 			return a.complete(parent, lease, postgres.Completion{Outcome: "error"})
 		}
-		return a.complete(parent, lease, postgres.Completion{Candidates: response.Result.Candidates, SelectedIndex: response.Result.SelectedIndex})
+		return a.complete(parent, lease, postgres.Completion{Candidates: response.Result.Candidates, SelectedIndex: response.Result.SelectedIndex, MaskedSource: response.Result.MaskedSource})
 	}
 	if lease.SelectedFunction == nil || lease.Answer == nil {
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error"})

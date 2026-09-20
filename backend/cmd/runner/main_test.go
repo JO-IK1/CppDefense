@@ -82,7 +82,7 @@ func TestExecutePrepareUsesSessionWorkspace(t *testing.T) {
 	worker := filepath.Join(t.TempDir(), "worker")
 	script := `#!/bin/sh
 test -d 0199a123-4568-7abc-8def-0123456789ab/project || exit 2
-printf '%s\n' '{"status":"ok","result":{"selected_index":0,"candidates":[{"function_name":"main","file_path":"main.cpp","signature":"int main()","signature_begin":0,"body_begin":10,"body_end":12,"begin_line":1,"end_line":1,"line_count":1,"source_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","original_body_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"}]}}'
+printf '%s\n' '{"status":"ok","result":{"selected_index":0,"masked_source":"int main() { /* TODO */ }","candidates":[{"function_name":"main","file_path":"main.cpp","signature":"int main()","signature_begin":0,"body_begin":10,"body_end":12,"begin_line":1,"end_line":1,"line_count":1,"source_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","original_body_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"}]}}'
 `
 	if err := os.WriteFile(worker, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

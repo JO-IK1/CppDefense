@@ -144,6 +144,16 @@ bool TestAnalyzeAndPrepare() {
   passed &= Expect(Read(project / "src/math.cpp").find("a + b") !=
                        std::string::npos,
                    "analysis never modifies the input project");
+  const auto& selected = first.at("result").at("selected_function");
+  const auto original = Read(project / selected.at("file_path").get<std::string>());
+  const auto body_begin = selected.at("body_begin").get<std::size_t>();
+  const auto body_end = selected.at("body_end").get<std::size_t>();
+  const auto original_body = original.substr(body_begin + 1, body_end - body_begin - 2);
+  const auto masked = first.at("result").at("masked_source").get<std::string>();
+  passed &= Expect(masked.find(original_body) == std::string::npos,
+                   "prepared source hides the selected implementation");
+  passed &= Expect(masked.find("/* TODO */") != std::string::npos,
+                   "prepared source marks the missing implementation");
 
   const Json conflict = Prepare(temporary.path(), kSessionOne, "43", "04");
   passed &= Expect(conflict.at("status") == "error" &&

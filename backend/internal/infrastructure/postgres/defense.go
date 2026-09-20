@@ -44,6 +44,7 @@ type Challenge struct {
 	Signature    string `json:"signature"`
 	BeginLine    int    `json:"begin_line"`
 	EndLine      int    `json:"end_line"`
+	MaskedSource string `json:"masked_source"`
 }
 type Attempt struct {
 	ID              string     `json:"id"`
@@ -122,7 +123,7 @@ func (r *DefenseRepository) Get(ctx context.Context, actor, id string) (Defense,
 	}
 	if v.SelectedCandidateID != nil {
 		var challenge Challenge
-		if e = r.db.pool.QueryRow(ctx, `select function_name,file_path,signature,start_line,end_line from defense_candidates where id=$1`, *v.SelectedCandidateID).Scan(&challenge.FunctionName, &challenge.FilePath, &challenge.Signature, &challenge.BeginLine, &challenge.EndLine); e == nil {
+		if e = r.db.pool.QueryRow(ctx, `select function_name,file_path,signature,start_line,end_line,coalesce(masked_source,'') from defense_candidates where id=$1`, *v.SelectedCandidateID).Scan(&challenge.FunctionName, &challenge.FilePath, &challenge.Signature, &challenge.BeginLine, &challenge.EndLine, &challenge.MaskedSource); e == nil {
 			v.Challenge = &challenge
 		}
 	}
@@ -348,6 +349,7 @@ type Completion struct {
 	Outcome         string      `json:"outcome"`
 	Candidates      []Candidate `json:"candidates"`
 	SelectedIndex   int         `json:"selected_index"`
+	MaskedSource    string      `json:"masked_source"`
 	ConfigureResult any         `json:"configure_result"`
 	BuildResult     any         `json:"build_result"`
 	CTestResult     any         `json:"ctest_result"`
@@ -392,7 +394,7 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 			if e != nil {
 				return nil, e
 			}
-		} else if len(input.Candidates) == 0 || input.SelectedIndex < 0 || input.SelectedIndex >= len(input.Candidates) {
+		} else if len(input.Candidates) == 0 || input.SelectedIndex < 0 || input.SelectedIndex >= len(input.Candidates) || len(input.MaskedSource) == 0 || len(input.MaskedSource) > 4<<20 {
 			return nil, fmt.Errorf("invalid candidates")
 		} else {
 			selected := ""
@@ -410,7 +412,11 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 				if chosen {
 					selected = id
 				}
-				_, e = tx.Exec(ctx, `insert into defense_candidates(id,defense_id,rank,function_name,file_path,signature,signature_begin_offset,body_start_offset,body_end_offset,start_line,end_line,line_count,source_sha256,original_body_sha256,is_selected)values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, id, defense, index+1, c.FunctionName, c.FilePath, c.Signature, c.SignatureBegin, c.BodyBegin, c.BodyEnd, c.BeginLine, c.EndLine, c.LineCount, source, body, chosen)
+				var maskedSource *string
+				if chosen {
+					maskedSource = &input.MaskedSource
+				}
+				_, e = tx.Exec(ctx, `insert into defense_candidates(id,defense_id,rank,function_name,file_path,signature,signature_begin_offset,body_start_offset,body_end_offset,start_line,end_line,line_count,source_sha256,original_body_sha256,is_selected,masked_source)values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, id, defense, index+1, c.FunctionName, c.FilePath, c.Signature, c.SignatureBegin, c.BodyBegin, c.BodyEnd, c.BeginLine, c.EndLine, c.LineCount, source, body, chosen, maskedSource)
 				if e != nil {
 					return nil, e
 				}
