@@ -9,10 +9,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/JO-IK1/CppDefense/backend/internal/application/audit"
+	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
 	appstorage "github.com/JO-IK1/CppDefense/backend/internal/application/storage"
 	"github.com/JO-IK1/CppDefense/backend/internal/config"
+	githuboauth "github.com/JO-IK1/CppDefense/backend/internal/infrastructure/github"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/objectstore/local"
 	s3storage "github.com/JO-IK1/CppDefense/backend/internal/infrastructure/objectstore/s3"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
@@ -101,13 +104,34 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, db *post
 	}
 
 	auditService := audit.New(postgres.NewAuditRepository(db))
+	authService, err := appauth.New(appauth.Config{
+		ClientID: cfg.GitHub.ClientID, ClientSecret: cfg.GitHub.ClientSecret,
+		RedirectURL:  cfg.HTTP.PublicOrigin + "/api/v1/auth/github/callback",
+		AuthorizeURL: cfg.GitHub.AuthorizeURL, FlowKey: cfg.GitHub.FlowKey, FlowTTL: cfg.GitHub.FlowTTL,
+	}, postgres.NewAuthRepository(db, cfg.GitHub.BootstrapAdminID), githuboauth.New(&http.Client{Timeout: 10 * time.Second}, cfg.GitHub.TokenURL, cfg.GitHub.APIURL))
+	if err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+	sessions := postgres.NewSessionRepository(db, cfg.Session.HashKey, cfg.Session.CSRFKey)
+	storageRepository := postgres.NewStorageRepository(db)
 	handler := httpapi.New(httpapi.Dependencies{
 		Logger: logger,
 		Ready: func(ctx context.Context) error {
 			return errors.Join(postgres.Ready(ctx, db), fileStorage.Check(ctx))
 		},
-		Audit:  auditService,
-		Config: cfg.HTTP,
+		Audit:         auditService,
+		Auth:          authService,
+		Sessions:      sessions,
+		SessionConfig: cfg.Session,
+		Config:        cfg.HTTP,
+		Catalog:       postgres.NewCatalogRepository(db),
+		Imports:       postgres.NewImportRepository(db),
+		Files:         fileStorage,
+		Submissions:   appstorage.NewSubmissionService(fileStorage, storageRepository),
+		Downloads:     appstorage.NewDownloadService(fileStorage, storageRepository),
+		Defenses:      postgres.NewDefenseRepository(db),
+		RunnerToken:   cfg.RunnerToken,
+		Admin:         postgres.NewAdminRepository(db),
 	})
 
 	server := &http.Server{

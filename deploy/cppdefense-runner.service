@@ -1,0 +1,24 @@
+[Unit]
+Description=CppDefense Runner Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cppdefense-runner
+Group=cppdefense-runner
+EnvironmentFile=/etc/cppdefense/runner.env
+ExecStart=/opt/cppdefense/bin/cppdefense-runner
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+# Rootless Podman keeps its image and overlay storage in this user's home.
+ProtectHome=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cppdefense-runner
+WorkingDirectory=/var/lib/cppdefense-runner
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

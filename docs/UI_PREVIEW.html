@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>CppDefense — preview интерфейса</title>
+  <link rel="stylesheet" href="../backend/internal/transport/httpapi/static/app.css">
+  <script src="../backend/internal/transport/httpapi/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a href="#" class="brand"><span class="brand__mark">C++</span><span>CppDefense</span></a>
+    <div class="topbar__actions"><span class="user-name">Georgii Zakharev</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Переключить тему">☀</button><button class="quiet-button" type="button">Выйти</button></div>
+  </header>
+  <main data-role="student">
+    <section class="welcome"><div><p class="eyebrow">student · active</p><h1>Личный кабинет</h1></div><p class="welcome__copy">Выберите работу, получите функцию и отправьте решение на настоящую сборку.</p></section>
+    <section class="section-block">
+      <div class="section-heading"><div><p class="eyebrow">Обучение</p><h2>Мои лабораторные</h2></div><span class="section-hint">Выберите работу для защиты</span></div>
+      <div class="grid lab-grid">
+        <article class="card lab-card"><div class="lab-card__meta"><span class="badge">LAB-01</span><span>Версия 3</span></div><h3>Основы классов и перегрузка операторов</h3><div class="card-actions"><a class="secondary-button" href="#">Скачать ZIP</a><button type="button">Начать защиту</button></div></article>
+        <article class="card lab-card"><div class="lab-card__meta"><span class="badge">LAB-02</span><span>Версия 1</span></div><h3>Шаблоны и контейнеры STL</h3><div class="card-actions"><a class="secondary-button" href="#">Скачать ZIP</a><button type="button">Начать защиту</button></div></article>
+      </div>
+    </section>
+    <section class="defense-panel">
+      <div class="wheel-column"><p class="eyebrow">Случайный выбор</p><div class="function-wheel is-selected" aria-label="Колесо выбора функции"><div class="function-wheel__face"><span>Matrix::operator*()</span></div></div><p class="wheel-status">src/matrix.cpp:48–67</p><p class="timer">Осталось 14:32</p></div>
+      <div class="editor-column"><div class="section-heading"><div><p class="eyebrow">Ответ</p><h2>Тело функции</h2></div><span>Без внешних скобок</span></div><textarea rows="16" spellcheck="false" placeholder="Введите реализацию функции…">Matrix result(rows_, other.cols_);
+for (std::size_t i = 0; i &lt; rows_; ++i) {
+    // Продолжите реализацию…
+}</textarea><div class="actions"><button class="secondary-button">Сохранить черновик</button><button>Отправить на проверку</button><button class="danger-button">Отменить</button></div></div>
+    </section>
+  </main>
+  <footer>CppDefense 2.0 <span>·</span> UI preview</footer>
+</body>
+</html>

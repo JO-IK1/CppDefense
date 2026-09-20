@@ -76,3 +76,4 @@ Testing/
 /backend/.env
 /backend/cppdefense
 /backend/var/
+/deploy/production.env

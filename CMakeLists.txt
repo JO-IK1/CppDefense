@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(CppDefense VERSION 1.2.0 LANGUAGES CXX)
+project(CppDefense VERSION 2.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 

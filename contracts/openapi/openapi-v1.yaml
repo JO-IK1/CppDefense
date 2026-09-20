@@ -82,6 +82,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/BadGateway'
   /api/v1/auth/logout:
     post:
       tags: [Auth]
@@ -94,6 +96,8 @@ paths:
           description: Session revoked
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v1/me:
     get:
       tags: [Profile]
@@ -116,9 +120,6 @@ paths:
       x-roles: [teacher, admin]
       security:
         - cookieAuth: []
-      parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: Groups visible to current user
@@ -221,10 +222,61 @@ paths:
                 $ref: '#/components/schemas/Lab'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/groups/{group_id}/submissions:
+    get:
+      tags: [Groups]
+      operationId: listGroupSubmissions
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Immutable submission versions in a managed group
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupSubmission'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/submissions/{submission_id}/archive:
+    get:
+      tags: [Groups]
+      operationId: downloadSubmissionArchive
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: submission_id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: ZIP visible to its student, assigned teacher, or administrator
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/imports:
     post:
       tags: [Imports]
@@ -320,6 +372,10 @@ paths:
                 $ref: '#/components/schemas/Import'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
   /api/v1/imports/{import_id}/apply:
@@ -469,6 +525,25 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/defenses/{defense_id}/cancel:
+    post:
+      tags: [Defenses]
+      operationId: cancelDefense
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Defense and outstanding jobs cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Defense'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /api/v1/attempts/{attempt_id}:
     get:
       tags: [Defenses]
@@ -494,7 +569,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
         - name: group_id
           in: query
@@ -530,6 +604,40 @@ paths:
                     type: [string, 'null']
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/pending-links:
+    get:
+      tags: [Administration]
+      operationId: listPendingStudentLinks
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Pending GitHub accounts with scoped matching student records
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [user_id, github_login]
+                      properties:
+                        user_id: { $ref: '#/components/schemas/Uuid' }
+                        display_name: { type: [string, 'null'] }
+                        github_login: { type: string }
+                        student_record_id:
+                          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+                        group_id:
+                          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+                        group_code: { type: [string, 'null'] }
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v1/admin/pending-links/{user_id}/approve:
     post:
       tags: [Administration]
@@ -562,6 +670,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
@@ -597,6 +709,130 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/users:
+    get:
+      tags: [Administration]
+      operationId: listManagedUsers
+      x-roles: [admin]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Users visible to the administrator
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ManagedUser'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/users/{user_id}/role:
+    put:
+      tags: [Administration]
+      operationId: setUserRole
+      x-roles: [admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role:
+                  enum: [student, teacher, admin]
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedUser'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/users/{user_id}/block:
+    post:
+      tags: [Administration]
+      operationId: blockUser
+      x-roles: [admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        '200':
+          description: User blocked and active sessions revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedUser'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/groups/{group_id}/teachers:
+    post:
+      tags: [Administration]
+      operationId: assignTeacherToGroup
+      x-roles: [admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [user_id]
+              properties:
+                user_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '204':
+          description: Teacher assigned
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
@@ -664,7 +900,7 @@ paths:
                 capacity:
                   type: integer
                   minimum: 1
-                  maximum: 64
+                  maximum: 6
       responses:
         '200':
           description: One job leased
@@ -866,6 +1102,12 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    BadGateway:
+      description: Upstream identity provider failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
   schemas:
     Uuid:
       type: string
@@ -913,6 +1155,28 @@ components:
               verified_at:
                 type: string
                 format: date-time
+        created_at:
+          type: string
+          format: date-time
+    ManagedUser:
+      type: object
+      additionalProperties: false
+      required: [id, status, github_id, github_login, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        status:
+          enum: [pending, active, rejected, blocked]
+        role:
+          type: [string, 'null']
+          enum: [student, teacher, admin, null]
+        display_name:
+          type: [string, 'null']
+        github_id:
+          type: integer
+          format: int64
+        github_login:
+          type: string
         created_at:
           type: string
           format: date-time
@@ -1021,20 +1285,27 @@ components:
           type: integer
           minimum: 1
           maximum: 50
+    GroupSubmission:
+      type: object
+      additionalProperties: false
+      required: [id, lab_id, lab_code, lab_name, version_number, created_at, student_record_id, github_login]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        lab_id: { $ref: '#/components/schemas/Uuid' }
+        lab_code: { $ref: '#/components/schemas/Code' }
+        lab_name: { type: string }
+        version_number: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        student_record_id: { $ref: '#/components/schemas/Uuid' }
+        github_login: { type: string }
     ReviewChecklist:
       type: object
       additionalProperties: false
-      required: [group_correct, students_correct, labs_correct, sizes_expected, no_errors]
+      required: [paths_checked, ownership_checked]
       properties:
-        group_correct:
+        paths_checked:
           const: true
-        students_correct:
-          const: true
-        labs_correct:
-          const: true
-        sizes_expected:
-          const: true
-        no_errors:
+        ownership_checked:
           const: true
     ImportState:
       enum: [receiving, stored, validating, review_pending, approved, applying, completed, rejected, failed, cancelled]
@@ -1072,26 +1343,28 @@ components:
     ImportItem:
       type: object
       additionalProperties: false
-      required: [id, github_login, lab_code, project_path, action, warnings, errors]
+      required: [id, student_record_id, lab_id, github_login, project_path, action, file_count, uncompressed_size]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
+        student_record_id:
+          $ref: '#/components/schemas/Uuid'
+        lab_id:
+          $ref: '#/components/schemas/Uuid'
         github_login:
           type: string
-        lab_code:
-          $ref: '#/components/schemas/Code'
         project_path:
           type: string
         action:
           enum: [create_student_and_version, create_version, skip_duplicate, conflict]
-        warnings:
-          type: array
-          items:
-            $ref: '#/components/schemas/ValidationMessage'
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/ValidationMessage'
+        file_count:
+          type: integer
+          minimum: 0
+        uncompressed_size:
+          type: integer
+          minimum: 0
+        submission_version_id:
+          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
     ValidationMessage:
       type: object
       additionalProperties: false
@@ -1109,7 +1382,7 @@ components:
     Defense:
       type: object
       additionalProperties: false
-      required: [id, session_id, submission_version_id, state, time_limit_seconds, created_at]
+      required: [id, session_id, submission_version_id, status, seed, time_limit_seconds, current_draft, draft_version, created_at]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -1117,18 +1390,34 @@ components:
           $ref: '#/components/schemas/Uuid'
         submission_version_id:
           $ref: '#/components/schemas/Uuid'
-        state:
+        status:
           $ref: '#/components/schemas/DefenseState'
+        seed:
+          type: string
+          pattern: '^(0|[1-9][0-9]{0,19})$'
         time_limit_seconds:
           type: integer
           minimum: 1
         deadline_at:
           type: [string, 'null']
           format: date-time
-        selected_function:
+        challenge:
           oneOf:
             - $ref: '#/components/schemas/SelectedFunction'
             - type: 'null'
+        current_draft:
+          type: string
+        draft_version:
+          type: integer
+          minimum: 1
+        started_at:
+          type: [string, 'null']
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+        selected_candidate_id:
+          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
         created_at:
           type: string
           format: date-time
@@ -1177,15 +1466,9 @@ components:
           minimum: 1
         outcome:
           $ref: '#/components/schemas/AttemptOutcome'
-        configure:
-          $ref: '#/components/schemas/StageResult'
-        build:
-          $ref: '#/components/schemas/StageResult'
-        ctest:
-          $ref: '#/components/schemas/StageResult'
-        safe_log_url:
-          type: [string, 'null']
-          format: uri
+        configure_result: {}
+        build_result: {}
+        ctest_result: {}
         accepted_at:
           type: string
           format: date-time
@@ -1195,11 +1478,11 @@ components:
     JobLease:
       type: object
       additionalProperties: false
-      required: [job_id, job_kind, defense_id, lease_token, lease_expires_at, timeout_seconds, input]
+      required: [job_id, kind, defense_id, lease_token, lease_expires_at, session_id, submission_object_key, seed, top_n]
       properties:
         job_id:
           $ref: '#/components/schemas/Uuid'
-        job_kind:
+        kind:
           enum: [prepare_defense, check_attempt]
         defense_id:
           $ref: '#/components/schemas/Uuid'
@@ -1213,13 +1496,22 @@ components:
         lease_expires_at:
           type: string
           format: date-time
-        timeout_seconds:
+        session_id:
+          $ref: '#/components/schemas/Uuid'
+        submission_object_key:
+          type: string
+        seed:
+          type: string
+        top_n:
           type: integer
           minimum: 1
-        input:
+          maximum: 50
+        answer:
+          type: [string, 'null']
+        selected_function:
           oneOf:
-            - $ref: '#/components/schemas/PrepareJobInput'
-            - $ref: '#/components/schemas/CheckJobInput'
+            - $ref: '#/components/schemas/WorkerSelectedFunction'
+            - type: 'null'
     PrepareJobInput:
       type: object
       additionalProperties: false
@@ -1283,35 +1575,35 @@ components:
     CompleteJobRequest:
       type: object
       additionalProperties: false
-      required: [job_kind, technical_state, worker_version, image_digest]
       properties:
-        job_kind:
-          enum: [prepare_defense, check_attempt]
-        technical_state:
-          enum: [completed, timed_out, retryable_error, fatal_error]
         outcome:
-          oneOf:
-            - $ref: '#/components/schemas/AttemptOutcome'
-            - type: 'null'
-        prepared_defense:
-          type: [object, 'null']
-          additionalProperties: true
-        configure:
-          $ref: '#/components/schemas/StageResult'
-        build:
-          $ref: '#/components/schemas/StageResult'
-        ctest:
-          $ref: '#/components/schemas/StageResult'
-        safe_log_upload_id:
-          type: [string, 'null']
-        worker_version:
-          type: string
-          minLength: 1
-        image_digest:
-          type: string
-          pattern: '^sha256:[a-f0-9]{64}$'
-        error_code:
-          type: [string, 'null']
+          enum: [passed, failed, error, '']
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreparedCandidate'
+        selected_index:
+          type: integer
+          minimum: 0
+        configure_result: {}
+        build_result: {}
+        ctest_result: {}
+    PreparedCandidate:
+      type: object
+      additionalProperties: false
+      required: [function_name, file_path, signature, signature_begin, body_begin, body_end, begin_line, end_line, line_count, source_sha256, original_body_sha256]
+      properties:
+        function_name: { type: string }
+        file_path: { type: string }
+        signature: { type: string }
+        signature_begin: { type: integer, minimum: 0 }
+        body_begin: { type: integer, minimum: 0 }
+        body_end: { type: integer, minimum: 1 }
+        begin_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
+        line_count: { type: integer, minimum: 1 }
+        source_sha256: { $ref: '#/components/schemas/Sha256' }
+        original_body_sha256: { $ref: '#/components/schemas/Sha256' }
     Problem:
       type: object
       additionalProperties: false

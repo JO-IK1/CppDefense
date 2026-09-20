@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
 	"github.com/JO-IK1/CppDefense/backend/internal/config"
 	"github.com/JO-IK1/CppDefense/backend/internal/domain"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
@@ -33,6 +35,44 @@ func database(t *testing.T) *postgres.Database {
 	return db
 }
 
+func TestGitHubLoginAutomaticallyClaimsUniqueStudent(t *testing.T) {
+	db := database(t)
+	ctx := context.Background()
+	suffix, _ := domain.NewUUIDv7()
+	groupID, _ := domain.NewUUIDv7()
+	recordID, _ := domain.NewUUIDv7()
+	login := "oauth-" + suffix
+	if _, err := db.Pool().Exec(ctx, `insert into groups(id,code,name) values($1,$2,$3)`, groupID, "group-"+suffix, "OAuth test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool().Exec(ctx, `insert into student_records(id,group_id,github_login_expected,created_source) values($1,$2,$3,'manual')`, recordID, groupID, login); err != nil {
+		t.Fatal(err)
+	}
+	repository := postgres.NewAuthRepository(db, 1)
+	githubID := time.Now().UnixNano()
+	user, err := repository.LoginGitHub(ctx, appauth.Profile{ID: githubID, Login: strings.ToUpper(login), DisplayName: "Student"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Status != "active" || user.Role == nil || *user.Role != "student" {
+		t.Fatalf("unexpected user: %#v", user)
+	}
+	var linkedUser string
+	if err := db.Pool().QueryRow(ctx, `select user_id from student_records where id=$1 and status='claimed'`, recordID).Scan(&linkedUser); err != nil {
+		t.Fatal(err)
+	}
+	if linkedUser != user.ID {
+		t.Fatalf("linked user = %q, want %q", linkedUser, user.ID)
+	}
+	repeated, err := repository.LoginGitHub(ctx, appauth.Profile{ID: githubID, Login: login + "-renamed", DisplayName: "Student"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.ID != user.ID || repeated.Identity.Subject != user.Identity.Subject {
+		t.Fatalf("repeat created another user: %#v", repeated)
+	}
+}
+
 func TestMigrationsAreRepeatable(t *testing.T) {
 	db := database(t)
 	if err := postgres.Migrate(context.Background(), db); err != nil {
@@ -42,7 +82,7 @@ func TestMigrationsAreRepeatable(t *testing.T) {
 	if err := db.Pool().QueryRow(context.Background(), "select count(*) from cppdefense_schema_migrations").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 3 {
+	if count != 7 {
 		t.Fatalf("migration count = %d", count)
 	}
 	var legacyTable *string

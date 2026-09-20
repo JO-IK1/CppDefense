@@ -75,9 +75,10 @@ for a complete compiler frontend.
 
 ## Project status
 
-**Version: 1.2.0**
+**Version: 2.0.0**
 
-The complete console workflow is preserved. The project currently contains
+The complete console workflow is preserved and the 2.0 web platform is
+included in the same repository. The project contains
 104 CTest scenarios, including worker protocol calls from Python and Go,
 deterministic selection, parallel session isolation, end-to-end retries,
 process timeouts and path safety.
@@ -86,7 +87,8 @@ Current scope:
 
 - C++23 compiler required to build CppDefense;
 - CMake 3.20+ projects are supported as exercise targets;
-- active sessions are process-local and are not restored after restart;
+- local CLI sessions are process-local and are not restored after restart;
+- web defenses, attempts, compilation history and uploaded labs are persistent;
 - worker preparation state is persisted inside its runner-provided session directory;
 - highly macro-driven or exotic C++ syntax may be outside parser coverage.
 
@@ -96,6 +98,10 @@ Current scope:
 - [Architecture](docs/ARCHITECTURE.md) — components, data flow, invariants, and
   security boundaries.
 - [Go backend](backend/README.md) — local setup, storage, migrations, and tests.
+- [CppDefense 2.0 deployment](docs/DEPLOYMENT_2.0.md) — two-VM production setup,
+  backup, restore, and operations.
+- [UI preview](docs/UI_PREVIEW.html) — standalone mock page that can be opened
+  directly in a browser without PostgreSQL, OAuth, or the Go server.
 - [Contracts](contracts/README.md) — versioned ZIP, HTTP, and worker interfaces.
 - [Roadmap](docs/ROADMAP.md) — implemented scope and next milestones.
 - [Security policy](SECURITY.md) and [release guide](docs/RELEASING.md).

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
 	"github.com/JO-IK1/CppDefense/backend/internal/domain"
 	"github.com/JO-IK1/CppDefense/backend/internal/security"
 	"github.com/jackc/pgx/v5"
@@ -17,10 +18,12 @@ type SessionRepository struct {
 }
 
 type Session struct {
-	ID        string
-	UserID    string
-	ExpiresAt time.Time
-	RevokedAt *time.Time
+	ID             string
+	UserID         string
+	ExpiresAt      time.Time
+	RevokedAt      *time.Time
+	ViewAsRole     *string
+	ViewAsTargetID *string
 }
 
 type NewSession struct {
@@ -61,10 +64,10 @@ func (repository *SessionRepository) FindActive(ctx context.Context, token strin
 	var session Session
 	var csrfHash []byte
 	err := repository.db.pool.QueryRow(ctx, `
-		select id, user_id, expires_at, revoked_at, csrf_secret_hash
+		select id, user_id, expires_at, revoked_at, csrf_secret_hash, view_as_role::text, view_as_target_id
 		from web_sessions
 		where token_hash = $1 and revoked_at is null and expires_at > clock_timestamp()
-	`, security.HashToken(repository.hashKey, token)).Scan(&session.ID, &session.UserID, &session.ExpiresAt, &session.RevokedAt, &csrfHash)
+	`, security.HashToken(repository.hashKey, token)).Scan(&session.ID, &session.UserID, &session.ExpiresAt, &session.RevokedAt, &csrfHash, &session.ViewAsRole, &session.ViewAsTargetID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return Session{}, nil, err
@@ -72,6 +75,26 @@ func (repository *SessionRepository) FindActive(ctx context.Context, token strin
 		return Session{}, nil, fmt.Errorf("find session: %w", err)
 	}
 	return session, csrfHash, nil
+}
+
+func (repository *SessionRepository) SetViewAs(ctx context.Context, sessionID, userID, role, targetID string) error {
+	var allowed bool
+	if role == "admin" {
+		targetID = userID
+	}
+	err := repository.db.pool.QueryRow(ctx, `select exists(select 1 from users u where u.id=$1 and u.status='active' and u.role='admin' and ($3='admin' or ($3='teacher' and exists(select 1 from groups where id=$4)) or ($3='student' and exists(select 1 from student_records sr join groups g on g.id=sr.group_id where sr.id=$4 and g.is_demo))))`, userID, sessionID, role, targetID).Scan(&allowed)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return appauth.ErrForbidden
+	}
+	_, err = repository.db.pool.Exec(ctx, `update web_sessions set view_as_role=$2,view_as_target_id=$3 where id=$1 and user_id=$4 and revoked_at is null`, sessionID, role, targetID, userID)
+	return err
+}
+func (repository *SessionRepository) ClearViewAs(ctx context.Context, sessionID, userID string) error {
+	_, err := repository.db.pool.Exec(ctx, `update web_sessions set view_as_role=null,view_as_target_id=null where id=$1 and user_id=$2 and revoked_at is null`, sessionID, userID)
+	return err
 }
 
 func (repository *SessionRepository) Revoke(ctx context.Context, sessionID string) error {

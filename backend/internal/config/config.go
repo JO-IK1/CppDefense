@@ -16,9 +16,22 @@ type Config struct {
 	HTTP        HTTP
 	Database    Database
 	Session     Session
+	GitHub      GitHubOAuth
+	RunnerToken string
 	Storage     Storage
 	LogLevel    slog.Level
 	AutoMigrate bool
+}
+
+type GitHubOAuth struct {
+	ClientID         string
+	ClientSecret     string
+	FlowKey          []byte
+	FlowTTL          time.Duration
+	AuthorizeURL     string
+	TokenURL         string
+	APIURL           string
+	BootstrapAdminID int64
 }
 
 type HTTP struct {
@@ -90,6 +103,15 @@ func Load() (Config, error) {
 	cfg.Session.HashKey = secret("CPPDEFENSE_SESSION_HASH_KEY", &err)
 	cfg.Session.CSRFKey = secret("CPPDEFENSE_CSRF_HASH_KEY", &err)
 	cfg.Session.TTL = duration("CPPDEFENSE_SESSION_TTL", 24*time.Hour, &err)
+	cfg.GitHub.ClientID = strings.TrimSpace(os.Getenv("CPPDEFENSE_GITHUB_CLIENT_ID"))
+	cfg.GitHub.ClientSecret = strings.TrimSpace(os.Getenv("CPPDEFENSE_GITHUB_CLIENT_SECRET"))
+	cfg.GitHub.FlowKey = secret("CPPDEFENSE_OAUTH_FLOW_KEY", &err)
+	cfg.GitHub.FlowTTL = duration("CPPDEFENSE_OAUTH_FLOW_TTL", 10*time.Minute, &err)
+	cfg.GitHub.AuthorizeURL = env("CPPDEFENSE_GITHUB_AUTHORIZE_URL", "https://github.com/login/oauth/authorize")
+	cfg.GitHub.TokenURL = env("CPPDEFENSE_GITHUB_TOKEN_URL", "https://github.com/login/oauth/access_token")
+	cfg.GitHub.APIURL = strings.TrimRight(env("CPPDEFENSE_GITHUB_API_URL", "https://api.github.com"), "/")
+	cfg.GitHub.BootstrapAdminID = int64Value("CPPDEFENSE_BOOTSTRAP_ADMIN_GITHUB_ID", &err)
+	cfg.RunnerToken = strings.TrimSpace(os.Getenv("CPPDEFENSE_RUNNER_TOKEN"))
 	cfg.Storage.Mode = strings.ToLower(env("CPPDEFENSE_STORAGE_MODE", "local"))
 	cfg.Storage.LocalRoot = env("CPPDEFENSE_STORAGE_LOCAL_ROOT", "./var/objects")
 	cfg.Storage.Endpoint = strings.TrimSpace(os.Getenv("CPPDEFENSE_STORAGE_S3_ENDPOINT"))
@@ -110,6 +132,18 @@ func Load() (Config, error) {
 	}
 	if cfg.Session.TTL <= 0 {
 		return cfg, errors.New("session TTL must be positive")
+	}
+	if cfg.GitHub.ClientID == "" || cfg.GitHub.ClientSecret == "" {
+		return cfg, errors.New("CPPDEFENSE_GITHUB_CLIENT_ID and CPPDEFENSE_GITHUB_CLIENT_SECRET are required")
+	}
+	if cfg.GitHub.FlowTTL <= 0 {
+		return cfg, errors.New("OAuth flow TTL must be positive")
+	}
+	if len(cfg.GitHub.FlowKey) != 32 {
+		return cfg, errors.New("CPPDEFENSE_OAUTH_FLOW_KEY must decode to exactly 32 bytes")
+	}
+	if len(cfg.RunnerToken) < 32 {
+		return cfg, errors.New("CPPDEFENSE_RUNNER_TOKEN must contain at least 32 characters")
 	}
 	if cfg.Storage.Mode != "local" && cfg.Storage.Mode != "s3" {
 		return cfg, errors.New("CPPDEFENSE_STORAGE_MODE must be local or s3")
@@ -140,6 +174,14 @@ func duration(name string, fallback time.Duration, target *error) time.Duration 
 
 func integer(name string, fallback int, target *error) int {
 	value, parseErr := strconv.Atoi(env(name, strconv.Itoa(fallback)))
+	if (parseErr != nil || value <= 0) && *target == nil {
+		*target = fmt.Errorf("%s must be a positive integer", name)
+	}
+	return value
+}
+
+func int64Value(name string, target *error) int64 {
+	value, parseErr := strconv.ParseInt(strings.TrimSpace(os.Getenv(name)), 10, 64)
 	if (parseErr != nil || value <= 0) && *target == nil {
 		*target = fmt.Errorf("%s must be a positive integer", name)
 	}

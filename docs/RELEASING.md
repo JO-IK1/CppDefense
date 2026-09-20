@@ -8,8 +8,8 @@
 5. Create and push the matching annotated tag, for example:
 
    ```bash
-   git tag -a v1.0.0 -m "CppDefense 1.0.0"
-   git push origin v1.0.0
+   git tag -a v2.0.0 -m "CppDefense 2.0.0"
+   git push origin v2.0.0
    ```
 
 The tag starts the GitHub Actions release job. CPack and the install rules put

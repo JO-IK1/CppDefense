@@ -17,8 +17,8 @@ process boundaries over microservices.
   defenses, queue management, persistence, and the web UI.
 - Runner Agent is a separate process on an isolated machine. It invokes the C++
   worker and executes untrusted builds inside disposable containers.
-- PostgreSQL is the source of truth for metadata and state. Private S3-compatible
-  storage holds archives and sanitized logs.
+- PostgreSQL is the source of truth for metadata, state, and bounded compilation
+  results. Private S3-compatible storage holds original and normalized archives.
 
 The versioned boundaries between the backend, runner, worker, and import tools
 live in [`contracts/`](../contracts/README.md).
@@ -159,7 +159,8 @@ other personal data. The main namespaces are:
 
 - `original-archives/` for teacher uploads;
 - `normalized-submissions/` for immutable project versions;
-- `safe-logs/` for bounded, sanitized runner output.
+- `safe-logs/` is reserved for a future external-log implementation; version
+  2.0 stores bounded structured compilation results in PostgreSQL.
 
 Writes calculate SHA-256 while streaming. Submission versions are immutable in
 PostgreSQL, and identical content for the same student and lab is deduplicated.
@@ -189,7 +190,6 @@ stateDiagram-v2
   preparing --> active
   preparing --> error
   active --> passed
-  active --> failed
   active --> expired
   active --> error
   ready --> cancelled
@@ -197,7 +197,6 @@ stateDiagram-v2
   active --> cancelled
   error --> ready: audited recovery
   passed --> [*]
-  failed --> [*]
   expired --> [*]
   cancelled --> [*]
 ```
@@ -210,6 +209,7 @@ stateDiagram-v2
   queued --> leased
   leased --> running
   leased --> queued: lease expired
+  leased --> dead: retries exhausted
   running --> completed
   running --> retry_wait: infrastructure failure
   retry_wait --> queued: backoff elapsed
