@@ -23,20 +23,38 @@ type DefenseRepository struct{ db *Database }
 func NewDefenseRepository(db *Database) *DefenseRepository { return &DefenseRepository{db: db} }
 
 type Defense struct {
-	ID                  string     `json:"id"`
-	SessionID           string     `json:"session_id"`
-	SubmissionVersionID string     `json:"submission_version_id"`
-	Status              string     `json:"status"`
-	Seed                string     `json:"seed"`
-	TimeLimitSeconds    int        `json:"time_limit_seconds"`
-	StartedAt           *time.Time `json:"started_at"`
-	DeadlineAt          *time.Time `json:"deadline_at"`
-	FinishedAt          *time.Time `json:"finished_at"`
-	CurrentDraft        string     `json:"current_draft"`
-	DraftVersion        int64      `json:"draft_version"`
-	SelectedCandidateID *string    `json:"selected_candidate_id"`
-	Challenge           *Challenge `json:"challenge,omitempty"`
-	CreatedAt           time.Time  `json:"created_at"`
+	ID                  string           `json:"id"`
+	SessionID           string           `json:"session_id"`
+	SubmissionVersionID string           `json:"submission_version_id"`
+	StudentLogin        string           `json:"student_login"`
+	LabCode             string           `json:"lab_code"`
+	LabName             string           `json:"lab_name"`
+	Status              string           `json:"status"`
+	Seed                string           `json:"seed"`
+	TimeLimitSeconds    int              `json:"time_limit_seconds"`
+	StartedAt           *time.Time       `json:"started_at"`
+	DeadlineAt          *time.Time       `json:"deadline_at"`
+	FinishedAt          *time.Time       `json:"finished_at"`
+	CurrentDraft        string           `json:"current_draft"`
+	DraftVersion        int64            `json:"draft_version"`
+	SelectedCandidateID *string          `json:"selected_candidate_id"`
+	Challenge           *Challenge       `json:"challenge,omitempty"`
+	WheelCandidates     []WheelCandidate `json:"wheel_candidates,omitempty"`
+	CreatedAt           time.Time        `json:"created_at"`
+}
+type WheelCandidate struct {
+	ID           string `json:"id"`
+	Rank         int    `json:"rank"`
+	FunctionName string `json:"function_name"`
+	Signature    string `json:"signature"`
+	FilePath     string `json:"file_path"`
+	LineCount    int    `json:"line_count"`
+}
+type DefenseSourceAccess struct {
+	ObjectKey    string
+	SelectedFile string
+	BodyBegin    int64
+	BodyEnd      int64
 }
 type Challenge struct {
 	FunctionName string `json:"function_name"`
@@ -117,7 +135,7 @@ func (r *DefenseRepository) Create(ctx context.Context, actor, submission, key s
 func (r *DefenseRepository) Get(ctx context.Context, actor, id string) (Defense, error) {
 	_, _ = r.db.pool.Exec(ctx, `update defenses set status='expired',finished_at=clock_timestamp(),terminal_reason='deadline reached' where id=$1 and status='active' and deadline_at<=clock_timestamp()`, id)
 	var v Defense
-	e := r.db.pool.QueryRow(ctx, `select d.id,d.session_id,d.submission_version_id,d.status::text,d.seed::text,d.time_limit_seconds,d.started_at,d.deadline_at,d.finished_at,coalesce(d.current_draft,''),d.draft_version,d.selected_candidate_id,d.created_at from defenses d join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where d.id=$2 and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.SessionID, &v.SubmissionVersionID, &v.Status, &v.Seed, &v.TimeLimitSeconds, &v.StartedAt, &v.DeadlineAt, &v.FinishedAt, &v.CurrentDraft, &v.DraftVersion, &v.SelectedCandidateID, &v.CreatedAt)
+	e := r.db.pool.QueryRow(ctx, `select d.id,d.session_id,d.submission_version_id,sr.github_login_expected::text,l.code::text,l.name,d.status::text,d.seed::text,d.time_limit_seconds,d.started_at,d.deadline_at,d.finished_at,coalesce(d.current_draft,''),d.draft_version,d.selected_candidate_id,d.created_at from defenses d join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join labs l on l.id=sv.lab_id join users u on u.id=$1 and u.status='active' where d.id=$2 and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.SessionID, &v.SubmissionVersionID, &v.StudentLogin, &v.LabCode, &v.LabName, &v.Status, &v.Seed, &v.TimeLimitSeconds, &v.StartedAt, &v.DeadlineAt, &v.FinishedAt, &v.CurrentDraft, &v.DraftVersion, &v.SelectedCandidateID, &v.CreatedAt)
 	if e != nil {
 		return Defense{}, appauth.ErrForbidden
 	}
@@ -127,7 +145,98 @@ func (r *DefenseRepository) Get(ctx context.Context, actor, id string) (Defense,
 			v.Challenge = &challenge
 		}
 	}
+	rows, queryErr := r.db.pool.Query(ctx, `select id,rank,function_name,signature,file_path,line_count from defense_candidates where defense_id=$1 order by rank`, id)
+	if queryErr == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var candidate WheelCandidate
+			if scanErr := rows.Scan(&candidate.ID, &candidate.Rank, &candidate.FunctionName, &candidate.Signature, &candidate.FilePath, &candidate.LineCount); scanErr != nil {
+				return Defense{}, scanErr
+			}
+			v.WheelCandidates = append(v.WheelCandidates, candidate)
+		}
+		if rows.Err() != nil {
+			return Defense{}, rows.Err()
+		}
+	}
 	return v, nil
+}
+
+func (r *DefenseRepository) PendingConfiguration(ctx context.Context, actor string) ([]Defense, error) {
+	rows, e := r.db.pool.Query(ctx, `select d.id from defenses d join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where d.status='ready' and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id))) order by d.created_at`, actor)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if e = rows.Scan(&id); e != nil {
+			return nil, e
+		}
+		ids = append(ids, id)
+	}
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	values := make([]Defense, 0, len(ids))
+	for _, id := range ids {
+		value, getErr := r.Get(ctx, actor, id)
+		if getErr != nil {
+			return nil, getErr
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mode, candidateID string, seconds int) (Defense, error) {
+	if mode != "automatic" && mode != "manual" || seconds < 60 || seconds > 86400 {
+		return Defense{}, appauth.ErrConflict
+	}
+	tx, e := r.db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if e != nil {
+		return Defense{}, e
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var suggested int
+	var allowed bool
+	e = tx.QueryRow(ctx, `select coalesce(d.suggested_candidate_rank,0),exists(select 1 from users u join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id where u.id=$2 and u.status='active' and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))) from defenses d where d.id=$1 and d.status='ready' for update`, defenseID, actor).Scan(&suggested, &allowed)
+	if e != nil || !allowed || suggested < 1 {
+		return Defense{}, appauth.ErrConflict
+	}
+	var selected string
+	if mode == "automatic" {
+		e = tx.QueryRow(ctx, `select id from defense_candidates where defense_id=$1 and rank=$2`, defenseID, suggested).Scan(&selected)
+	} else {
+		e = tx.QueryRow(ctx, `select id from defense_candidates where defense_id=$1 and id=$2`, defenseID, candidateID).Scan(&selected)
+	}
+	if e != nil {
+		return Defense{}, appauth.ErrConflict
+	}
+	if _, e = tx.Exec(ctx, `update defense_candidates set is_selected=(id=$2) where defense_id=$1`, defenseID, selected); e != nil {
+		return Defense{}, e
+	}
+	if _, e = tx.Exec(ctx, `update defenses set selected_candidate_id=$2,selection_mode=$3,time_limit_seconds=$4,status='preparing' where id=$1 and status='ready'`, defenseID, selected, mode, seconds); e != nil {
+		return Defense{}, e
+	}
+	job, _ := domain.NewUUIDv7()
+	if _, e = tx.Exec(ctx, `insert into runner_jobs(id,kind,defense_id,timeout_seconds)values($1,'prepare_defense',$2,300)`, job, defenseID); e != nil {
+		return Defense{}, e
+	}
+	if e = tx.Commit(ctx); e != nil {
+		return Defense{}, e
+	}
+	return r.Get(ctx, actor, defenseID)
+}
+
+func (r *DefenseRepository) SourceAccess(ctx context.Context, actor, defenseID string) (DefenseSourceAccess, error) {
+	var access DefenseSourceAccess
+	e := r.db.pool.QueryRow(ctx, `select sv.normalized_object_key,dc.file_path,dc.body_start_offset,dc.body_end_offset from defenses d join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join defense_candidates dc on dc.id=d.selected_candidate_id join users u on u.id=$1 and u.status='active' where d.id=$2 and d.status in('active','passed','failed','expired') and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, defenseID).Scan(&access.ObjectKey, &access.SelectedFile, &access.BodyBegin, &access.BodyEnd)
+	if e != nil {
+		return DefenseSourceAccess{}, appauth.ErrForbidden
+	}
+	return access, nil
 }
 func (r *DefenseRepository) SaveDraft(ctx context.Context, actor, id, answer string, version int64) (int64, time.Time, error) {
 	var newVersion int64
@@ -236,6 +345,7 @@ type Lease struct {
 	SubmissionObjectKey string            `json:"submission_object_key"`
 	Seed                string            `json:"seed"`
 	TopN                int               `json:"top_n"`
+	SelectedIndex       *int              `json:"selected_index,omitempty"`
 	Answer              *string           `json:"answer"`
 	SelectedFunction    *SelectedFunction `json:"selected_function,omitempty"`
 }
@@ -254,7 +364,7 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 		return Lease{}, e
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	_, e = tx.Exec(ctx, `insert into runners(id,name,status,slots,agent_version,credential_hash,last_heartbeat_at)values($1,$2,'active',$3,'2.0',$4,clock_timestamp()) on conflict(id)do update set status='active',slots=excluded.slots,last_heartbeat_at=clock_timestamp()`, runnerID, "runner-"+runnerID, slots, credentialHash)
+	_, e = tx.Exec(ctx, `insert into runners(id,name,status,slots,agent_version,credential_hash,last_heartbeat_at)values($1,$2,'active',$3,'2.1.0',$4,clock_timestamp()) on conflict(id)do update set status='active',slots=excluded.slots,agent_version=excluded.agent_version,last_heartbeat_at=clock_timestamp()`, runnerID, "runner-"+runnerID, slots, credentialHash)
 	if e != nil {
 		return Lease{}, e
 	}
@@ -325,6 +435,15 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 		}
 		selected.SourceSHA256 = fmt.Sprintf("%x", digest)
 		v.SelectedFunction = &selected
+	} else if v.Kind == "prepare_defense" {
+		var rank *int
+		if e = r.db.pool.QueryRow(ctx, `select dc.rank from defenses d left join defense_candidates dc on dc.id=d.selected_candidate_id where d.id=$1`, v.DefenseID).Scan(&rank); e != nil {
+			return Lease{}, e
+		}
+		if rank != nil {
+			index := *rank - 1
+			v.SelectedIndex = &index
+		}
 	}
 	return v, nil
 }
@@ -397,31 +516,33 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 		} else if len(input.Candidates) == 0 || input.SelectedIndex < 0 || input.SelectedIndex >= len(input.Candidates) || len(input.MaskedSource) == 0 || len(input.MaskedSource) > 4<<20 {
 			return nil, fmt.Errorf("invalid candidates")
 		} else {
-			selected := ""
-			for index, c := range input.Candidates {
-				source, e := hex.DecodeString(c.SourceSHA256)
-				if e != nil || len(source) != 32 {
-					return nil, fmt.Errorf("invalid source digest")
+			var selectedID *string
+			if e = tx.QueryRow(ctx, `select selected_candidate_id from defenses where id=$1 for update`, defense).Scan(&selectedID); e != nil {
+				return nil, e
+			}
+			if selectedID == nil {
+				for index, c := range input.Candidates {
+					source, decodeErr := hex.DecodeString(c.SourceSHA256)
+					if decodeErr != nil || len(source) != 32 {
+						return nil, fmt.Errorf("invalid source digest")
+					}
+					body, decodeErr := hex.DecodeString(c.OriginalBodySHA256)
+					if decodeErr != nil || len(body) != 32 {
+						return nil, fmt.Errorf("invalid body digest")
+					}
+					id, _ := domain.NewUUIDv7()
+					_, e = tx.Exec(ctx, `insert into defense_candidates(id,defense_id,rank,function_name,file_path,signature,signature_begin_offset,body_start_offset,body_end_offset,start_line,end_line,line_count,source_sha256,original_body_sha256,is_selected)values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,false)`, id, defense, index+1, c.FunctionName, c.FilePath, c.Signature, c.SignatureBegin, c.BodyBegin, c.BodyEnd, c.BeginLine, c.EndLine, c.LineCount, source, body)
+					if e != nil {
+						return nil, e
+					}
 				}
-				body, e := hex.DecodeString(c.OriginalBodySHA256)
-				if e != nil || len(body) != 32 {
-					return nil, fmt.Errorf("invalid body digest")
-				}
-				id, _ := domain.NewUUIDv7()
-				chosen := index == input.SelectedIndex
-				if chosen {
-					selected = id
-				}
-				var maskedSource *string
-				if chosen {
-					maskedSource = &input.MaskedSource
-				}
-				_, e = tx.Exec(ctx, `insert into defense_candidates(id,defense_id,rank,function_name,file_path,signature,signature_begin_offset,body_start_offset,body_end_offset,start_line,end_line,line_count,source_sha256,original_body_sha256,is_selected,masked_source)values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, id, defense, index+1, c.FunctionName, c.FilePath, c.Signature, c.SignatureBegin, c.BodyBegin, c.BodyEnd, c.BeginLine, c.EndLine, c.LineCount, source, body, chosen, maskedSource)
-				if e != nil {
-					return nil, e
+				_, e = tx.Exec(ctx, `update defenses set status='ready',suggested_candidate_rank=$2 where id=$1 and status='preparing'`, defense, input.SelectedIndex+1)
+			} else {
+				_, e = tx.Exec(ctx, `update defense_candidates set masked_source=$2 where id=$1 and is_selected`, *selectedID, input.MaskedSource)
+				if e == nil {
+					_, e = tx.Exec(ctx, `update defenses set status='active',started_at=clock_timestamp(),deadline_at=clock_timestamp()+make_interval(secs=>time_limit_seconds) where id=$1 and status='preparing'`, defense)
 				}
 			}
-			_, e = tx.Exec(ctx, `update defenses set selected_candidate_id=$2,status='active',started_at=clock_timestamp(),deadline_at=clock_timestamp()+make_interval(secs=>time_limit_seconds) where id=$1 and status='preparing'`, defense, selected)
 			if e != nil {
 				return nil, e
 			}

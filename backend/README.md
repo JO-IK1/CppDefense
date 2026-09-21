@@ -6,7 +6,7 @@ checks, private storage for project archives, reviewed ZIP import, the defense
 queue, role dashboards, and the private Runner API.
 
 For the complete two-VM installation, Cloudflare, rootless Podman, backups and
-restore procedure, use [the CppDefense 2.0 deployment guide](../docs/DEPLOYMENT_2.0.md).
+restore procedure, use [the CppDefense 2.1 deployment guide](../docs/DEPLOYMENT_2.1.md).
 
 ## Run locally
 

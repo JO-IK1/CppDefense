@@ -1,4 +1,4 @@
-# CppDefense 2.0: запуск сайта
+# CppDefense 2.1.0: запуск сайта
 
 Ниже описана рекомендуемая схема для домашнего Windows-ноутбука: приложение
 работает в Ubuntu VM №1, а недоверенные студенческие проекты — в Ubuntu VM №2.
@@ -16,6 +16,95 @@
 | Windows-хост | оставить не меньше 4 потоков | 6–8 ГБ | системный диск |
 | VM №1, приложение | 2–4 vCPU | 4–6 ГБ | 50–60 ГБ, dynamic |
 | VM №2, проверки | 4–6 vCPU | 6–10 ГБ | 70–100 ГБ, dynamic |
+
+### Точная конфигурация для ноутбука с 16 ГБ RAM
+
+Не используйте значения из таблицы выше как статически выделенную память: они
+предназначены для хоста с 32 ГБ. На 16 ГБ включите **Dynamic Memory** и начните
+со следующего профиля:
+
+| VM | vCPU | Minimum RAM | Startup RAM | Maximum RAM | Назначение |
+|---|---:|---:|---:|---:|---|
+| `cppdefense-app` | 2 | 1536 МБ | 2048 МБ | 3072 МБ | Backend, PostgreSQL, MinIO, Tunnel |
+| `cppdefense-runner` | 4 | 2048 МБ | 3072 МБ | 4096 МБ | Не более двух одновременных проверок |
+
+Таким образом, обе VM не смогут забрать больше 7 ГБ. Windows и Hyper-V
+останется около 9 ГБ. Это важнее, чем попытка сразу получить 4–6 параллельных
+компиляций. Для четырёх проверок лучше установить 32 ГБ RAM либо перенести
+Runner на другой компьютер.
+
+После создания и выключения VM примените параметры в PowerShell от
+администратора:
+
+```powershell
+Set-VMProcessor -VMName "cppdefense-app" -Count 2
+Set-VMMemory -VMName "cppdefense-app" -DynamicMemoryEnabled $true `
+  -MinimumBytes 1536MB -StartupBytes 2GB -MaximumBytes 3GB -Buffer 15
+
+Set-VMProcessor -VMName "cppdefense-runner" -Count 4
+Set-VMMemory -VMName "cppdefense-runner" -DynamicMemoryEnabled $true `
+  -MinimumBytes 2GB -StartupBytes 3GB -MaximumBytes 4GB -Buffer 15
+```
+
+Проверить результат:
+
+```powershell
+Get-VM | Select-Object Name, State, ProcessorCount, MemoryAssigned, MemoryDemand
+Get-VMMemory -VMName "cppdefense-app", "cppdefense-runner" |
+  Select-Object VMName, DynamicMemoryEnabled, Minimum, Startup, Maximum
+```
+
+В `runner.env` установите `CPPDEFENSE_RUNNER_SLOTS=2`. Если во время двух
+одновременных защит VM №2 не использует swap и у Windows остаётся хотя бы
+2–3 ГБ доступной памяти, можно экспериментально попробовать `3`. Значение `4`
+для хоста с 16 ГБ не является безопасным стартовым вариантом.
+
+### Почему Windows уже использует 7–8 ГБ
+
+Закрытые окна не означают пустую RAM. В неё входят Windows, драйверы, Defender,
+службы производителя ноутбука, память графики, сжатые страницы и файловый
+кэш. Standby-кэш освобождается автоматически при появлении нагрузки, поэтому
+не устанавливайте «очистители RAM».
+
+Откройте **Диспетчер задач → Производительность → Память** и смотрите:
+
+- **Доступно** — главный показатель; включает память, которую Windows может
+  быстро отдать VM и приложениям;
+- **Выделено/Committed** — если текущее значение близко к пределу, система
+  действительно испытывает давление на память;
+- **Кэшировано** — обычно не проблема, этот объём переиспользуется;
+- **Выгружаемый/невыгружаемый пул** — резкий постоянный рост может указывать
+  на утечку драйвера;
+- **Зарезервировано аппаратно** — часть может быть отдана встроенной графике.
+
+Для поиска крупных процессов выполните обычный PowerShell:
+
+```powershell
+Get-Process |
+  Sort-Object WorkingSet64 -Descending |
+  Select-Object -First 15 Name, Id, @{Name="RAM_MB";Expression={[math]::Round($_.WorkingSet64 / 1MB)}}
+```
+
+Если среди лидеров есть `VmmemWSL`, значит память использует WSL 2 или Docker
+Desktop. Для CppDefense на этом ноутбуке Docker Desktop не нужен: Docker будет
+работать внутри VM №1. Закройте Docker Desktop и, если WSL сейчас не нужен,
+остановите его:
+
+```powershell
+wsl --shutdown
+```
+
+Это завершает все запущенные WSL-дистрибутивы, поэтому сначала сохраните работу
+в них. Если WSL нужен параллельно, его общий лимит можно задать через приложение
+**WSL Settings** или `%UserProfile%\.wslconfig`; не выделяйте WSL ещё половину
+RAM одновременно с двумя Hyper-V VM.
+
+Если после перезагрузки без запущенных VM значение **Доступно** составляет
+6–9 ГБ, для Windows 11 это приемлемо и ничего чистить не нужно. Сначала
+разбирайтесь с системой, если доступно меньше 2 ГБ, диск постоянно занят
+подкачкой, committed почти достиг предела или невыгружаемый пул непрерывно
+растёт. Оставьте размер файла подкачки в режиме «по выбору системы» — Microsoft
+рекомендует это для Hyper-V.
 
 В BIOS/UEFI включите Intel VT-x/VT-d или AMD-V/SVM. В Windows нужен Hyper-V,
 то есть редакция Pro/Enterprise/Education. В PowerShell от администратора:
@@ -188,7 +277,7 @@ sudo useradd --system --create-home --home-dir /var/lib/cppdefense-runner --shel
 sudo usermod --add-subuids 100000-165535 cppdefense-runner
 sudo usermod --add-subgids 100000-165535 cppdefense-runner
 sudo loginctl enable-linger cppdefense-runner
-sudo -u cppdefense-runner podman build -t localhost/cppdefense-sandbox:2.0 -f deploy/sandbox.Dockerfile .
+sudo -u cppdefense-runner podman build -t localhost/cppdefense-sandbox:2.1.0 -f deploy/sandbox.Dockerfile .
 sudo install -d -m 0750 /etc/cppdefense
 sudo cp deploy/runner.env.example /etc/cppdefense/runner.env
 sudo chmod 600 /etc/cppdefense/runner.env
@@ -196,8 +285,9 @@ sudo chmod 600 /etc/cppdefense/runner.env
 
 В `runner.env` укажите приватный URL VM №1, одинаковый runner token, UUID
 runner и отдельные read-only MinIO credentials. Значение
-`CPPDEFENSE_RUNNER_SLOTS=4` подходит для старта; увеличивайте до 6 только после
-проверки RAM и CPU. Установите сервис:
+На ноутбуке с 16 ГБ используйте `CPPDEFENSE_RUNNER_SLOTS=2`. Значение `4`
+подходит для 32 ГБ после проверки RAM и CPU; увеличивайте до 6 только после
+нагрузочного теста. Установите сервис:
 
 ```sh
 sudo cp deploy/cppdefense-runner.service /etc/systemd/system/

@@ -1,17 +1,14 @@
 package httpapi
 
 import (
-	"embed"
 	"html/template"
 	"io/fs"
 	"net/http"
 
 	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
+	"github.com/JO-IK1/CppDefense/backend/webassets"
 )
-
-//go:embed templates/*.html static/*
-var webFiles embed.FS
 
 type webHTTP struct {
 	auth      *authHTTP
@@ -28,8 +25,8 @@ type appPage struct {
 }
 
 func newWebHTTP(auth *authHTTP, catalog *postgres.CatalogRepository) *webHTTP {
-	templates := template.Must(template.ParseFS(webFiles, "templates/*.html"))
-	assets, _ := fs.Sub(webFiles, "static")
+	templates := template.Must(template.ParseFS(webassets.Files, "templates/*.html"))
+	assets, _ := fs.Sub(webassets.Files, "static")
 	return &webHTTP{auth: auth, catalog: catalog, templates: templates, static: http.StripPrefix("/static/", http.FileServer(http.FS(assets)))}
 }
 func (h *webHTTP) index(w http.ResponseWriter, r *http.Request) {

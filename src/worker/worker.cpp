@@ -184,11 +184,17 @@ Json Execute(const fs::path& workspace, const Json& r) {
   }
 
   CandidatePicker picker(Seed(p["seed"]));
-  const auto choice = picker.Pick(analysis.entities, p["top_n"].get<std::size_t>(),
-                                  CandidateSelectionMode::kFunctionsOnly);
+  auto choice = picker.Pick(analysis.entities, p["top_n"].get<std::size_t>(),
+                            CandidateSelectionMode::kFunctionsOnly);
   if (!choice) {
     throw Error("NO_FUNCTION_CANDIDATES", "No suitable functions",
                 "invalid_project");
+  }
+  if (p.contains("selected_index")) {
+    const auto selected_index = p["selected_index"].get<std::size_t>();
+    Require(selected_index < choice->candidates.size(), "INVALID_REQUEST",
+            "selected_index is outside the candidate wheel");
+    choice->selected_index = selected_index;
   }
   auto candidates = Json::array();
   for (std::size_t i = 0; i < choice->candidates.size(); ++i) {

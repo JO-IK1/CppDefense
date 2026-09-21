@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "process_runner.hpp"
+#include "process/process_runner.hpp"
 
 namespace cpp_defense {
 namespace {

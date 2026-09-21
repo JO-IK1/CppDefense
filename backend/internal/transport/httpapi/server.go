@@ -74,9 +74,15 @@ func New(dependencies Dependencies) http.Handler {
 		mux.HandleFunc("POST /api/v1/imports/{import_id}/apply", importHandler.apply)
 	}
 	if dependencies.Defenses != nil {
-		defenseHandler := &defenseHTTP{repository: dependencies.Defenses, auth: authHandler, runnerToken: dependencies.RunnerToken}
+		defenseHandler := &defenseHTTP{repository: dependencies.Defenses, auth: authHandler, files: dependencies.Files, runnerToken: dependencies.RunnerToken}
 		mux.HandleFunc("POST /api/v1/defenses", defenseHandler.create)
 		mux.HandleFunc("GET /api/v1/defenses/{defense_id}", defenseHandler.get)
+		mux.HandleFunc("GET /api/v1/teacher/defenses/pending", defenseHandler.pendingConfiguration)
+		mux.HandleFunc("POST /api/v1/defenses/{defense_id}/configure", defenseHandler.configure)
+		if dependencies.Files != nil {
+			mux.HandleFunc("GET /api/v1/defenses/{defense_id}/repository", defenseHandler.repositoryFiles)
+			mux.HandleFunc("GET /api/v1/defenses/{defense_id}/repository/file", defenseHandler.repositoryFile)
+		}
 		mux.HandleFunc("PUT /api/v1/defenses/{defense_id}/draft", defenseHandler.draft)
 		mux.HandleFunc("POST /api/v1/defenses/{defense_id}/attempts", defenseHandler.attempt)
 		mux.HandleFunc("POST /api/v1/defenses/{defense_id}/cancel", defenseHandler.cancel)

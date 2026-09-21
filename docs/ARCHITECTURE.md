@@ -65,9 +65,10 @@ braces. Source hashes and byte offsets prevent applying an answer to changed
 input.
 
 Candidate selection is deterministic when a seed is supplied: the parser finds
-supported entities, retains the largest `N`, and chooses one with a stable
-64-bit random seed. The parser is intentionally lightweight and is not a full
-C++ frontend.
+supported entities and builds the wheel from roughly one third random functions
+and two thirds of the largest functions. A stable 64-bit seed makes the result
+reproducible. The parser is intentionally lightweight and is not a full C++
+frontend.
 
 ## Web defense flow
 
@@ -75,12 +76,15 @@ C++ frontend.
 2. The backend validates its manifest and ZIP structure before creating an
    immutable submission version.
 3. A student starts a defense tied to one exact submission version.
-4. PostgreSQL queues a preparation or check job and grants a time-limited lease
-   to a runner.
-5. The runner downloads the authorized object, invokes the worker, runs the
-   project in a sandbox, and returns a bounded result.
-6. The backend validates the lease and state transition before committing the
-   result and audit event.
+4. PostgreSQL queues the first preparation job. The runner analyses the project
+   and returns the named wheel candidates.
+5. The teacher chooses the suggested function or one candidate manually and
+   confirms the defense time limit.
+6. The backend queues final preparation. Only after it finishes does the timer
+   start and the student receive the repository browser, with the selected
+   function body masked in its source file.
+7. Check jobs run the submitted body in the sandbox; the backend validates the
+   lease and transition before committing the result and audit event.
 
 Retries are idempotent. A stale runner cannot overwrite a newer result, and a
 new submission version never changes an active defense.
@@ -97,11 +101,19 @@ sequenceDiagram
   B->>S: Store immutable project
   B->>D: Create submission version
   Student->>B: Start defense
-  B->>D: Create job
+  B->>D: Queue project analysis
   R->>B: Lease job
   R->>S: Download scoped object
-  R->>R: Run worker in sandbox
-  R->>B: Complete with lease token
+  R->>R: Discover wheel candidates
+  R->>B: Complete analysis
+  B-->>Teacher: Named candidate list
+  Teacher->>B: Confirm settings and function
+  B->>D: Queue final preparation
+  R->>B: Return masked challenge
+  B-->>Student: Start timer and expose repository browser
+  Student->>B: Submit function body
+  R->>R: Build and test in sandbox
+  R->>B: Complete check with lease token
   B->>D: Commit result and audit event
 ```
 
@@ -160,7 +172,7 @@ other personal data. The main namespaces are:
 - `original-archives/` for teacher uploads;
 - `normalized-submissions/` for immutable project versions;
 - `safe-logs/` is reserved for a future external-log implementation; version
-  2.0 stores bounded structured compilation results in PostgreSQL.
+  2.1.0 stores bounded structured compilation results in PostgreSQL.
 
 Writes calculate SHA-256 while streaming. Submission versions are immutable in
 PostgreSQL, and identical content for the same student and lab is deduplicated.
@@ -185,9 +197,10 @@ transaction. An unspecified transition is rejected as a conflict.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> ready
-  ready --> preparing
-  preparing --> active
+  [*] --> preparing
+  preparing --> ready: wheel candidates discovered
+  ready --> preparing: teacher confirms settings
+  preparing --> active: challenge prepared and timer started
   preparing --> error
   active --> passed
   active --> expired

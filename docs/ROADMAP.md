@@ -1,6 +1,6 @@
 # Roadmap
 
-## CppDefense 2.0
+## CppDefense 2.1.0
 
 - Local C++23 CLI with isolated workspaces, deterministic selection, timed
   retries, CMake/CTest validation, bounded logs, and cross-platform tests.

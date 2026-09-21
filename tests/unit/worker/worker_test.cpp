@@ -159,6 +159,16 @@ bool TestAnalyzeAndPrepare() {
   passed &= Expect(conflict.at("status") == "error" &&
                        conflict.at("error").at("code") == "SESSION_CONFLICT",
                    "different preparation cannot overwrite saved state");
+  CreateProject(temporary.path(), kSessionTwo);
+  const Json manual = Run(
+      temporary.path(),
+      Request("prepare_defense", kSessionTwo,
+              {{"project_root", "project"}, {"top_n", 2}, {"seed", "42"},
+               {"selected_index", 1}},
+              "06"));
+  passed &= Expect(manual.at("status") == "ok" &&
+                       manual.at("result").at("selected_index") == 1,
+                   "teacher-selected wheel index overrides the automatic result");
   return passed;
 }
 

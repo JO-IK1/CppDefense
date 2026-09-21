@@ -99,8 +99,12 @@ void ValidateRequest(const Json& r) {
   if (r["command"] == "analyze_project") {
     Fields(p, {"project_root"}, {"parser_options"});
   } else if (r["command"] == "prepare_defense") {
-    Fields(p, {"project_root", "top_n", "seed"}, {"parser_options"});
+    Fields(p, {"project_root", "top_n", "seed"}, {"parser_options", "selected_index"});
     Require(Number(p["top_n"], 1, 50), "INVALID_REQUEST", "top_n must be 1..50");
+    if (p.contains("selected_index")) {
+      Require(Number(p["selected_index"], 0, 49), "INVALID_REQUEST",
+              "selected_index must be 0..49");
+    }
     (void)Seed(p["seed"]);
   } else {
     Fields(p, {"project_root", "output_root", "selected_function", "answer"});

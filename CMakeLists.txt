@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(CppDefense VERSION 2.0.0 LANGUAGES CXX)
+project(CppDefense VERSION 2.1.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -44,7 +44,7 @@ add_library(cpp-defense-infrastructure
   src/infrastructure/check_workspace.cpp
   src/infrastructure/defense_result_writer.cpp
   src/infrastructure/build_runner.cpp
-  src/infrastructure/process_runner.cpp
+  src/infrastructure/process/process_runner.cpp
   src/infrastructure/runtime_path.cpp
 
 )
@@ -144,20 +144,20 @@ function(add_cpp_defense_test_target target source)
   endif()
 endfunction()
 
-add_cpp_defense_test_target(cpp-defense-tests tests/workspace_cache_test.cpp)
-add_cpp_defense_test_target(cpp-defense-project-scanner-tests tests/project_scanner_test.cpp)
-add_cpp_defense_test_target(cpp-defense-source-file-repository-tests tests/source_file_repository_test.cpp)
-add_cpp_defense_test_target(cpp-defense-source-parser-tests tests/simple_source_parser_test.cpp)
-add_cpp_defense_test_target(cpp-defense-fixed-priority-queue-tests tests/fixed_priority_queue_test.cpp)
-add_cpp_defense_test_target(cpp-defense-candidate-picker-tests tests/candidate_picker_test.cpp)
-add_cpp_defense_test_target(cpp-defense-file-masker-tests tests/file_masker_test.cpp)
-add_cpp_defense_test_target(cpp-defense-result-file-tests tests/result_file_test.cpp)
-add_cpp_defense_test_target(cpp-defense-file-patcher-tests tests/file_patcher_test.cpp)
-add_cpp_defense_test_target(cpp-defense-timer-tests tests/defense_timer_test.cpp)
-add_cpp_defense_test_target(cpp-defense-build-runner-tests tests/build_runner_test.cpp)
-add_cpp_defense_test_target(cpp-defense-session-tests tests/defense_session_test.cpp)
-add_cpp_defense_test_target(cpp-defense-runtime-path-tests tests/runtime_path_test.cpp)
-add_cpp_defense_test_target(cpp-defense-ui-tests tests/ui_test.cpp)
+add_cpp_defense_test_target(cpp-defense-tests tests/unit/infrastructure/workspace_cache_test.cpp)
+add_cpp_defense_test_target(cpp-defense-project-scanner-tests tests/unit/infrastructure/project_scanner_test.cpp)
+add_cpp_defense_test_target(cpp-defense-source-file-repository-tests tests/unit/infrastructure/source_file_repository_test.cpp)
+add_cpp_defense_test_target(cpp-defense-source-parser-tests tests/unit/infrastructure/simple_source_parser_test.cpp)
+add_cpp_defense_test_target(cpp-defense-fixed-priority-queue-tests tests/unit/core/fixed_priority_queue_test.cpp)
+add_cpp_defense_test_target(cpp-defense-candidate-picker-tests tests/unit/application/candidate_picker_test.cpp)
+add_cpp_defense_test_target(cpp-defense-file-masker-tests tests/unit/infrastructure/file_masker_test.cpp)
+add_cpp_defense_test_target(cpp-defense-result-file-tests tests/unit/infrastructure/result_file_test.cpp)
+add_cpp_defense_test_target(cpp-defense-file-patcher-tests tests/unit/infrastructure/file_patcher_test.cpp)
+add_cpp_defense_test_target(cpp-defense-timer-tests tests/unit/application/defense_timer_test.cpp)
+add_cpp_defense_test_target(cpp-defense-build-runner-tests tests/unit/infrastructure/build_runner_test.cpp)
+add_cpp_defense_test_target(cpp-defense-session-tests tests/unit/application/defense_session_test.cpp)
+add_cpp_defense_test_target(cpp-defense-runtime-path-tests tests/unit/infrastructure/runtime_path_test.cpp)
+add_cpp_defense_test_target(cpp-defense-ui-tests tests/unit/ui/ui_test.cpp)
 
 set(WORKSPACE_CACHE_TEST_CASES
   prepare-existing
@@ -274,7 +274,7 @@ endforeach()
 set(CANDIDATE_PICKER_TEST_CASES
   functions-only
   all-entities
-  keeps-largest
+  mixes-largest-random
   fewer-than-requested
   no-suitable-candidates
   invalid-candidate-count
@@ -366,19 +366,19 @@ endif()
 include(CPack)
 
 if(CPP_DEFENSE_BUILD_WORKER)
-  add_executable(cpp-defense-worker-tests tests/worker_test.cpp)
+  add_executable(cpp-defense-worker-tests tests/unit/worker/worker_test.cpp)
   target_link_libraries(cpp-defense-worker-tests PRIVATE cpp-defense-worker-adapter)
   add_test(NAME worker.unit COMMAND cpp-defense-worker-tests)
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
     add_test(NAME worker.protocol COMMAND ${Python3_EXECUTABLE}
-      ${PROJECT_SOURCE_DIR}/tests/worker_protocol_test.py
+      ${PROJECT_SOURCE_DIR}/tests/integration/worker/protocol_test.py
       $<TARGET_FILE:cpp-defense-worker> ${PROJECT_SOURCE_DIR})
   endif()
   find_program(CPP_DEFENSE_GO go)
   if(CPP_DEFENSE_GO)
     add_test(NAME worker.go-client COMMAND ${CPP_DEFENSE_GO} run
-      ${PROJECT_SOURCE_DIR}/tests/worker_smoke.go $<TARGET_FILE:cpp-defense-worker>)
+      ${PROJECT_SOURCE_DIR}/tests/integration/worker/go_smoke/main.go $<TARGET_FILE:cpp-defense-worker>)
     set_tests_properties(worker.go-client PROPERTIES TIMEOUT 120)
   endif()
 endif()

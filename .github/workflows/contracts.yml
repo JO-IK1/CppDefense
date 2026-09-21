@@ -78,4 +78,4 @@ jobs:
           cmake --build build-contract --target cpp-defense-worker --parallel 2
 
       - name: Validate live worker responses
-        run: python tests/worker_protocol_test.py build-contract/cpp-defense-worker .
+        run: python tests/integration/worker/protocol_test.py build-contract/cpp-defense-worker .

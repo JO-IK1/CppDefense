@@ -6,4 +6,4 @@ RUN apt-get update \
  && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin sandbox
 USER 65532:65532
 WORKDIR /workspace
-LABEL org.opencontainers.image.title="CppDefense sandbox" org.opencontainers.image.version="2.0"
+LABEL org.opencontainers.image.title="CppDefense sandbox" org.opencontainers.image.version="2.1.0"

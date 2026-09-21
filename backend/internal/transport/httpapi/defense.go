@@ -1,15 +1,21 @@
 package httpapi
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
+	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/JO-IK1/CppDefense/backend/internal/application/audit"
 	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
+	appstorage "github.com/JO-IK1/CppDefense/backend/internal/application/storage"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
 	"github.com/jackc/pgx/v5"
 )
@@ -17,6 +23,7 @@ import (
 type defenseHTTP struct {
 	repository  *postgres.DefenseRepository
 	auth        *authHTTP
+	files       appstorage.FileStorage
 	runnerToken string
 }
 
@@ -54,6 +61,174 @@ func (h *defenseHTTP) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, v)
+}
+func (h *defenseHTTP) pendingConfiguration(w http.ResponseWriter, r *http.Request) {
+	_, actor, _, ok := h.auth.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if actor.Role == nil || (*actor.Role != "teacher" && *actor.Role != "admin") {
+		writeProblem(w, r, 403, "FORBIDDEN", "Teacher or admin role is required")
+		return
+	}
+	values, e := h.repository.PendingConfiguration(r.Context(), actor.ID)
+	if e != nil {
+		h.fail(w, r, e)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": values})
+}
+func (h *defenseHTTP) configure(w http.ResponseWriter, r *http.Request) {
+	session, actor, cookie, ok := h.auth.authenticate(w, r)
+	if !ok || !h.auth.authorizeMutation(w, r, session, cookie) {
+		return
+	}
+	if actor.Role == nil || (*actor.Role != "teacher" && *actor.Role != "admin") {
+		writeProblem(w, r, 403, "FORBIDDEN", "Teacher or admin role is required")
+		return
+	}
+	var input struct {
+		SelectionMode    string `json:"selection_mode"`
+		CandidateID      string `json:"candidate_id"`
+		TimeLimitSeconds int    `json:"time_limit_seconds"`
+	}
+	if !decodeJSON(w, r, &input) || !validIdempotencyKey(r) || (input.SelectionMode == "manual" && !uuidPattern.MatchString(input.CandidateID)) {
+		writeProblem(w, r, 400, "INVALID_REQUEST", "Defense configuration is invalid")
+		return
+	}
+	value, e := h.repository.Configure(r.Context(), actor.ID, r.PathValue("defense_id"), input.SelectionMode, input.CandidateID, input.TimeLimitSeconds)
+	if e != nil {
+		h.fail(w, r, e)
+		return
+	}
+	if e = h.auth.audit.Record(r.Context(), audit.Event{ActorID: &actor.ID, ActorKind: "user", Action: "defense.configure", TargetType: "defense", TargetID: &value.ID, RequestID: RequestID(r.Context()), Metadata: map[string]any{"selection_mode": input.SelectionMode}}); e != nil {
+		writeProblem(w, r, 500, "AUDIT_WRITE_FAILED", "Could not record defense configuration")
+		return
+	}
+	writeJSON(w, 202, value)
+}
+
+func (h *defenseHTTP) repositoryFiles(w http.ResponseWriter, r *http.Request) {
+	_, actor, _, ok := h.auth.authenticate(w, r)
+	if !ok {
+		return
+	}
+	archive, _, e := h.openDefenseArchive(r, actor.ID)
+	if e != nil {
+		h.fail(w, r, e)
+		return
+	}
+	items := make([]map[string]any, 0, len(archive.File))
+	for _, file := range archive.File {
+		if file.FileInfo().IsDir() || !safeRepositoryPath(file.Name) {
+			continue
+		}
+		items = append(items, map[string]any{"path": file.Name, "size": file.UncompressedSize64})
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func (h *defenseHTTP) repositoryFile(w http.ResponseWriter, r *http.Request) {
+	_, actor, _, ok := h.auth.authenticate(w, r)
+	if !ok {
+		return
+	}
+	wanted := r.URL.Query().Get("path")
+	if !safeRepositoryPath(wanted) {
+		writeProblem(w, r, 400, "INVALID_PATH", "Repository path is invalid")
+		return
+	}
+	archive, access, e := h.openDefenseArchive(r, actor.ID)
+	if e != nil {
+		h.fail(w, r, e)
+		return
+	}
+	for _, file := range archive.File {
+		if file.Name != wanted || file.FileInfo().IsDir() {
+			continue
+		}
+		if file.UncompressedSize64 > 2<<20 {
+			writeProblem(w, r, 413, "FILE_TOO_LARGE", "File is too large for the browser")
+			return
+		}
+		reader, openErr := file.Open()
+		if openErr != nil {
+			h.fail(w, r, openErr)
+			return
+		}
+		content, readErr := io.ReadAll(io.LimitReader(reader, (2<<20)+1))
+		reader.Close()
+		if readErr != nil || len(content) > 2<<20 || !utf8.Valid(content) {
+			writeProblem(w, r, 422, "UNSUPPORTED_FILE", "Only UTF-8 text files up to 2 MiB can be viewed")
+			return
+		}
+		if wanted == access.SelectedFile {
+			content, e = maskRepositoryBody(content, access.BodyBegin, access.BodyEnd)
+			if e != nil {
+				h.fail(w, r, e)
+				return
+			}
+		}
+		writeJSON(w, 200, map[string]any{"path": wanted, "content": string(content), "masked": wanted == access.SelectedFile})
+		return
+	}
+	writeProblem(w, r, 404, "NOT_FOUND", "Repository file was not found")
+}
+
+func (h *defenseHTTP) openDefenseArchive(r *http.Request, actor string) (*zip.Reader, postgres.DefenseSourceAccess, error) {
+	access, e := h.repository.SourceAccess(r.Context(), actor, r.PathValue("defense_id"))
+	if e != nil {
+		return nil, postgres.DefenseSourceAccess{}, e
+	}
+	key, e := appstorage.ParseKey(access.ObjectKey)
+	if e != nil {
+		return nil, postgres.DefenseSourceAccess{}, e
+	}
+	reader, object, e := h.files.Open(r.Context(), key)
+	if e != nil {
+		return nil, postgres.DefenseSourceAccess{}, e
+	}
+	defer reader.Close()
+	if object.Size < 0 || object.Size > 256<<20 {
+		return nil, postgres.DefenseSourceAccess{}, errors.New("repository archive is too large")
+	}
+	data, e := io.ReadAll(io.LimitReader(reader, (256<<20)+1))
+	if e != nil || len(data) > 256<<20 {
+		return nil, postgres.DefenseSourceAccess{}, errors.New("could not read repository archive")
+	}
+	archive, e := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	return archive, access, e
+}
+
+func safeRepositoryPath(value string) bool {
+	return value != "" && value == path.Clean(value) && !strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "../") && !strings.Contains(value, "\\")
+}
+
+func maskRepositoryBody(source []byte, begin, end int64) ([]byte, error) {
+	if begin < 0 || end <= begin+1 || end > int64(len(source)) || source[begin] != '{' || source[end-1] != '}' {
+		return nil, errors.New("invalid selected function offsets")
+	}
+	masked := bytes.Clone(source)
+	for i := begin + 1; i < end-1; i++ {
+		if masked[i] != '\n' && masked[i] != '\r' {
+			masked[i] = ' '
+		}
+	}
+	marker := []byte("/* TODO */")
+	for i := begin + 1; i+int64(len(marker)) <= end-1; i++ {
+		valid := true
+		for j := range marker {
+			if masked[i+int64(j)] == '\n' || masked[i+int64(j)] == '\r' {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			copy(masked[i:i+int64(len(marker))], marker)
+			break
+		}
+	}
+	return masked, nil
 }
 func (h *defenseHTTP) draft(w http.ResponseWriter, r *http.Request) {
 	s, a, c, ok := h.auth.authenticate(w, r)

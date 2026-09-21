@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
+	"github.com/JO-IK1/CppDefense/backend/webassets"
 )
 
 func TestAppTemplateRendersEveryRole(t *testing.T) {
-	templates, err := template.ParseFS(webFiles, "templates/*.html")
+	templates, err := template.ParseFS(webassets.Files, "templates/*.html")
 	if err != nil {
 		t.Fatal(err)
 	}

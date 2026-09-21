@@ -200,6 +200,11 @@
                 "seed": {
                   "$ref": "#/$defs/uint64"
                 },
+                "selected_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 49
+                },
                 "parser_options": {
                   "$ref": "#/$defs/parserOptions"
                 }

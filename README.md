@@ -75,9 +75,9 @@ for a complete compiler frontend.
 
 ## Project status
 
-**Version: 2.0.0**
+**Version: 2.1.0**
 
-The complete console workflow is preserved and the 2.0 web platform is
+The complete console workflow is preserved and the 2.1 web platform is
 included in the same repository. The project contains
 104 CTest scenarios, including worker protocol calls from Python and Go,
 deterministic selection, parallel session isolation, end-to-end retries,
@@ -97,11 +97,16 @@ Current scope:
 - [Usage](docs/USAGE.md) — build and use the local CLI.
 - [Architecture](docs/ARCHITECTURE.md) — components, data flow, invariants, and
   security boundaries.
+- [Project structure](docs/PROJECT_STRUCTURE.md) — where C++, Go, frontend,
+  API contracts, tests, and deployment files live.
 - [Go backend](backend/README.md) — local setup, storage, migrations, and tests.
-- [CppDefense 2.0 deployment](docs/DEPLOYMENT_2.0.md) — two-VM production setup,
+- [CppDefense 2.1 deployment](docs/DEPLOYMENT_2.1.md) — two-VM production setup,
   backup, restore, and operations.
 - [UI preview](docs/UI_PREVIEW.html) — standalone mock page that can be opened
   directly in a browser without PostgreSQL, OAuth, or the Go server.
+- Browser assets live in `backend/webassets`; HTTP handlers remain in
+  `backend/internal/transport/httpapi`, and versioned JSON contracts in
+  `contracts/`.
 - [Contracts](contracts/README.md) — versioned ZIP, HTTP, and worker interfaces.
 - [Roadmap](docs/ROADMAP.md) — implemented scope and next milestones.
 - [Security policy](SECURITY.md) and [release guide](docs/RELEASING.md).

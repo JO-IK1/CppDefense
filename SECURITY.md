@@ -29,7 +29,7 @@ Do not test destructive payloads against a live educational deployment. Use a lo
 
 ## Supported versions
 
-Until the first stable release, only the current development branch is evaluated. After 2.0, this section will list supported release lines and security update policy.
+Only the current 2.1 release line and the development branch are evaluated for security updates.
 
 ## Handling
 

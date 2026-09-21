@@ -110,7 +110,7 @@ bool TestAllEntities() {
                 "all mode keeps every supported entity type");
 }
 
-bool TestKeepsLargestCandidates() {
+bool TestMixesLargestAndRandomCandidates() {
   const std::vector<CodeEntityInfo> entities{
       MakeEntity("One", CodeEntityType::kFunction, 1),
       MakeEntity("Two", CodeEntityType::kFunction, 2),
@@ -127,10 +127,12 @@ bool TestKeepsLargestCandidates() {
     return false;
   }
 
-  return Expect(
-      CandidateNames(result->candidates) ==
-          std::vector<std::string>({"Five", "Four", "Three"}),
-      "picker keeps the N largest bodies");
+  const auto names = CandidateNames(result->candidates);
+  return Expect(std::find(names.begin(), names.end(), "Five") != names.end() &&
+                    std::find(names.begin(), names.end(), "Four") != names.end(),
+                "two thirds of the wheel keep the largest bodies") &&
+         Expect(names.size() == 3,
+                "one third of the wheel is sampled from the remainder");
 }
 
 bool TestUsesAllWhenFewerThanRequested() {
@@ -240,7 +242,7 @@ struct TestCase {
 constexpr std::array<TestCase, 8> kTestCases{{
     {"functions-only", TestFunctionsOnly},
     {"all-entities", TestAllEntities},
-    {"keeps-largest", TestKeepsLargestCandidates},
+    {"mixes-largest-random", TestMixesLargestAndRandomCandidates},
     {"fewer-than-requested", TestUsesAllWhenFewerThanRequested},
     {"no-suitable-candidates", TestNoSuitableCandidates},
     {"invalid-candidate-count", TestInvalidCandidateCount},

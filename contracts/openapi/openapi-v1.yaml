@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: CppDefense API
   version: 1.1.0
-  summary: Public application and private runner contracts for CppDefense 2.0
+  summary: Public application and private runner contracts for CppDefense 2.1.0
   license:
     name: Proprietary source-available
 servers:
@@ -491,6 +491,105 @@ paths:
                     format: date-time
         '409':
           $ref: '#/components/responses/Conflict'
+  /api/v1/teacher/defenses/pending:
+    get:
+      tags: [Defenses]
+      operationId: listDefensesPendingTeacherConfiguration
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Analyzed defenses waiting for teacher settings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Defense' }
+  /api/v1/defenses/{defense_id}/configure:
+    post:
+      tags: [Defenses]
+      operationId: configureDefense
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [selection_mode, candidate_id, time_limit_seconds]
+              properties:
+                selection_mode: { enum: [automatic, manual] }
+                candidate_id:
+                  type: string
+                  description: Empty for automatic mode; candidate UUID for manual mode
+                time_limit_seconds: { type: integer, minimum: 60, maximum: 86400 }
+      responses:
+        '202':
+          description: Teacher settings accepted and final preparation queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Defense' }
+  /api/v1/defenses/{defense_id}/repository:
+    get:
+      tags: [Defenses]
+      operationId: listDefenseRepositoryFiles
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+      responses:
+        '200':
+          description: Files in the defended submission
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, size]
+                      properties:
+                        path: { type: string }
+                        size: { type: integer, minimum: 0 }
+  /api/v1/defenses/{defense_id}/repository/file:
+    get:
+      tags: [Defenses]
+      operationId: getDefenseRepositoryFile
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+        - name: path
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 1024 }
+      responses:
+        '200':
+          description: UTF-8 file; the selected function body is masked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, content, masked]
+                properties:
+                  path: { type: string }
+                  content: { type: string, maxLength: 2097152 }
+                  masked: { type: boolean }
   /api/v1/defenses/{defense_id}/attempts:
     post:
       tags: [Defenses]
@@ -1382,7 +1481,7 @@ components:
     Defense:
       type: object
       additionalProperties: false
-      required: [id, session_id, submission_version_id, status, seed, time_limit_seconds, current_draft, draft_version, created_at]
+      required: [id, session_id, submission_version_id, student_login, lab_code, lab_name, status, seed, time_limit_seconds, current_draft, draft_version, created_at]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -1390,6 +1489,9 @@ components:
           $ref: '#/components/schemas/Uuid'
         submission_version_id:
           $ref: '#/components/schemas/Uuid'
+        student_login: { type: string }
+        lab_code: { type: string }
+        lab_name: { type: string }
         status:
           $ref: '#/components/schemas/DefenseState'
         seed:
@@ -1418,6 +1520,9 @@ components:
           format: date-time
         selected_candidate_id:
           oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+        wheel_candidates:
+          type: array
+          items: { $ref: '#/components/schemas/WheelCandidate' }
         created_at:
           type: string
           format: date-time
@@ -1443,6 +1548,17 @@ components:
           minLength: 1
           maxLength: 4194304
           description: Complete selected source file with only the chosen function body removed
+    WheelCandidate:
+      type: object
+      additionalProperties: false
+      required: [id, rank, function_name, signature, file_path, line_count]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        rank: { type: integer, minimum: 1 }
+        function_name: { type: string }
+        signature: { type: string }
+        file_path: { type: string }
+        line_count: { type: integer, minimum: 1 }
     AttemptOutcome:
       enum: [pending, passed, failed, error]
     StageResult:
@@ -1511,6 +1627,10 @@ components:
           type: integer
           minimum: 1
           maximum: 50
+        selected_index:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 49
         answer:
           type: [string, 'null']
         selected_function:
