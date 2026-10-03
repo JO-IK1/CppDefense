@@ -400,8 +400,11 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 		}
 	}
 	var v Lease
-	e = tx.QueryRow(ctx, `select j.id,j.kind::text,j.defense_id,j.check_attempt_id,d.session_id,sv.normalized_object_key,d.seed::text,l.top_n,a.answer from runner_jobs j join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=d.submission_version_id join labs l on l.id=sv.lab_id left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() order by j.priority desc,j.created_at for update skip locked limit 1`).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer)
+	e = tx.QueryRow(ctx, `select j.id,j.kind::text,j.defense_id,j.check_attempt_id,d.session_id,sv.normalized_object_key,d.seed::text,l.top_n,a.answer from runner_jobs j join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=d.submission_version_id join labs l on l.id=sv.lab_id left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() order by j.priority desc,j.created_at for update of j skip locked limit 1`).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer)
 	if e == pgx.ErrNoRows {
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return Lease{}, commitErr
+		}
 		return Lease{}, e
 	}
 	if e != nil {
