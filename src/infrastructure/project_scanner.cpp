@@ -30,6 +30,13 @@ bool IsSupportedSourceFile(const std::filesystem::path& file_path,
                            const ProjectScannerOptions& options) {
   const std::string extension = ToLower(file_path.extension().string());
 
+  const std::string stem = ToLower(file_path.stem().string());
+  const bool test_file =
+      stem == "test" || stem == "tests" || stem.starts_with("test_") ||
+      stem.starts_with("tests_") || stem.ends_with("_test") ||
+      stem.ends_with("_tests");
+  if (test_file) return false;
+
   return std::find(options.source_extensions.begin(), options.source_extensions.end(),
                    extension) != options.source_extensions.end();
 }

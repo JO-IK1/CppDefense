@@ -21,7 +21,7 @@ type prepareResponse struct {
 
 func runWorker(ctx context.Context, binary, dir string, input, output any) error {
 	data, _ := json.Marshal(input)
-	command := exec.CommandContext(ctx, binary)
+	command := exec.CommandContext(ctx, binary, "--workspace", dir)
 	command.Dir = dir
 	command.Stdin = bytes.NewReader(data)
 	var stdout, stderr limitedBuffer

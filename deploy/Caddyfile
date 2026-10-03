@@ -1,0 +1,8 @@
+{$CPPDEFENSE_PUBLIC_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy backend:8080
+
+	header {
+		-Server
+	}
+}

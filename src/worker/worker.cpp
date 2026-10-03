@@ -30,11 +30,13 @@ Analysis Analyze(const fs::path& project, const Json& payload) {
   }
 
   ProjectScannerOptions options;
-  options.excluded_directory_names = {".git", "build", ".idea", ".vscode"};
   if (payload.contains("parser_options")) {
     const auto& config = payload["parser_options"];
     if (config.contains("ignored_directories")) {
-      options.excluded_directory_names = config["ignored_directories"].get<std::vector<std::string>>();
+      const auto ignored =
+          config["ignored_directories"].get<std::vector<std::string>>();
+      options.excluded_directory_names.insert(
+          options.excluded_directory_names.end(), ignored.begin(), ignored.end());
     }
     if (config.contains("source_extensions")) {
       options.source_extensions = config["source_extensions"].get<std::vector<std::string>>();

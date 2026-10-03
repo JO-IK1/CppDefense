@@ -8,11 +8,16 @@ Type=simple
 User=cppdefense-runner
 Group=cppdefense-runner
 EnvironmentFile=/etc/cppdefense/runner.env
+Environment=HOME=/var/lib/cppdefense-runner
+Environment=CONTAINERS_CONF=/var/lib/cppdefense-runner/.config/containers/containers.conf
 ExecStart=/opt/cppdefense/bin/cppdefense-runner
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
+# Rootless Podman needs delegated cgroup v2 controllers to enforce the
+# sandbox CPU, memory and PID limits requested by the runner.
+Delegate=yes
 # Rootless Podman keeps its image and overlay storage in this user's home.
 ProtectHome=false
 ProtectSystem=strict

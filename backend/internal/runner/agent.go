@@ -134,12 +134,17 @@ func (a *agent) check(parent, ctx context.Context, attempt, workspace string, le
 	if err := runWorker(ctx, a.config.Worker, workspace, payload, &response); err != nil || response.Status != "ok" {
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error"})
 	}
-	result := runSandbox(ctx, a.config.Runtime, a.config.Image, attempt)
+	if err := makeSandboxReadable(attempt); err != nil {
+		result := commandResult{ExitCode: -1, Log: err.Error()}
+		return a.complete(parent, lease, postgres.Completion{Outcome: "error", ConfigureResult: result, BuildResult: result, CTestResult: result})
+	}
+	defer restoreSandboxOwnerAccess(attempt)
+	results := runSandbox(ctx, a.config.Runtime, a.config.Image, attempt)
 	outcome := "failed"
-	if result.OK {
+	if results.OK() {
 		outcome = "passed"
 	}
-	return a.complete(parent, lease, postgres.Completion{Outcome: outcome, ConfigureResult: result, BuildResult: result, CTestResult: result})
+	return a.complete(parent, lease, postgres.Completion{Outcome: outcome, ConfigureResult: results.Configure, BuildResult: results.Build, CTestResult: results.CTest})
 }
 
 func wait(ctx context.Context, delay time.Duration) bool {

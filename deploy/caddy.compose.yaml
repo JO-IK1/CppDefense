@@ -1,0 +1,23 @@
+services:
+  cloudflared:
+    profiles: ["cloudflare"]
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    env_file: ${CPPDEFENSE_ENV_FILE:-production.env}
+    depends_on:
+      backend: {condition: service_healthy}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  caddy-data:
+  caddy-config:

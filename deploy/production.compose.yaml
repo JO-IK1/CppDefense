@@ -17,7 +17,7 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-10-15T17-29-55Z
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
     restart: unless-stopped
     command: server /data --console-address ":9001"
     env_file: ${CPPDEFENSE_ENV_FILE:-production.env}
@@ -67,7 +67,7 @@ services:
       - "${CPPDEFENSE_PRIVATE_BIND_IP}:8080:8080"
     read_only: true
     tmpfs:
-      - /tmp:size=256m,mode=0700
+      - /tmp:size=256m,mode=0700,uid=65532,gid=65532
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     healthcheck:

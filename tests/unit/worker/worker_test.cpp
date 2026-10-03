@@ -78,6 +78,9 @@ fs::path CreateProject(const fs::path& root, std::string_view session_id) {
         "  int result = a * b;\n"
         "  return result;\n"
         "}\n");
+  Write(project / "tests.cpp", "int TestAdd() { return 1; }\n");
+  Write(project / "tests/calculator_test.cpp",
+        "int TestMultiply() { return 1; }\n");
   return project;
 }
 
@@ -125,7 +128,10 @@ bool TestAnalyzeAndPrepare() {
 
   const Json analyze = Run(
       temporary.path(),
-      Request("analyze_project", kSessionOne, {{"project_root", "project"}}));
+      Request("analyze_project", kSessionOne,
+              {{"project_root", "project"},
+               {"parser_options",
+                {{"ignored_directories", {"generated"}}}}}));
   bool passed = Expect(analyze.at("status") == "ok", "analysis succeeds");
   passed &= Expect(analyze.at("result").at("source_file_count") == 1,
                    "analysis reports source files");
