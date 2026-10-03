@@ -39,7 +39,7 @@ type Defense struct {
 	DraftVersion        int64            `json:"draft_version"`
 	SelectedCandidateID *string          `json:"selected_candidate_id"`
 	Challenge           *Challenge       `json:"challenge,omitempty"`
-	WheelCandidates     []WheelCandidate `json:"wheel_candidates,omitempty"`
+	WheelCandidates     []WheelCandidate `json:"wheel_candidates"`
 	CreatedAt           time.Time        `json:"created_at"`
 }
 type WheelCandidate struct {
@@ -134,7 +134,7 @@ func (r *DefenseRepository) Create(ctx context.Context, actor, submission, key s
 }
 func (r *DefenseRepository) Get(ctx context.Context, actor, id string) (Defense, error) {
 	_, _ = r.db.pool.Exec(ctx, `update defenses set status='expired',finished_at=clock_timestamp(),terminal_reason='deadline reached' where id=$1 and status='active' and deadline_at<=clock_timestamp()`, id)
-	var v Defense
+	v := Defense{WheelCandidates: make([]WheelCandidate, 0)}
 	e := r.db.pool.QueryRow(ctx, `select d.id,d.session_id,d.submission_version_id,sr.github_login_expected::text,l.code::text,l.name,d.status::text,d.seed::text,d.time_limit_seconds,d.started_at,d.deadline_at,d.finished_at,coalesce(d.current_draft,''),d.draft_version,d.selected_candidate_id,d.created_at from defenses d join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join labs l on l.id=sv.lab_id join users u on u.id=$1 and u.status='active' where d.id=$2 and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.SessionID, &v.SubmissionVersionID, &v.StudentLogin, &v.LabCode, &v.LabName, &v.Status, &v.Seed, &v.TimeLimitSeconds, &v.StartedAt, &v.DeadlineAt, &v.FinishedAt, &v.CurrentDraft, &v.DraftVersion, &v.SelectedCandidateID, &v.CreatedAt)
 	if e != nil {
 		return Defense{}, appauth.ErrForbidden

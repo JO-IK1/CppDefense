@@ -1,5 +1,7 @@
 # cpp-defense-worker protocol 1.0
 
+**English** | [Русский](README.ru.md)
+
 ## Transport
 
 - One UTF-8 JSON request on stdin, one UTF-8 JSON response on stdout.

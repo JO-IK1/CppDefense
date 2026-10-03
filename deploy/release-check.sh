@@ -19,6 +19,7 @@ cmake --build build-release-check --parallel 2
 ctest --test-dir build-release-check --output-on-failure --parallel 2
 python3 tests/integration/worker/protocol_test.py build-release-check/cpp-defense-worker .
 node --check backend/webassets/static/app.js
+node --test backend/webassets/static/app_test.mjs
 
 CPPDEFENSE_ENV_FILE="$env_file" docker compose --env-file "$env_file" \
   -f "$script_dir/production.compose.yaml" config --quiet

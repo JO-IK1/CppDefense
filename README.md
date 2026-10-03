@@ -1,123 +1,115 @@
 # CppDefense
 
-> **Source available for review. Proprietary software — not open source.**
+**English** | [Русский](README.ru.md)
+
+> Source available for review. Proprietary software — not open source.
 
 Copyright (c) 2026 Zakharev Georgii. All rights reserved.
 
-CppDefense is a C++23 console application for practicing university-style C++
-lab defenses. It turns an existing CMake project into a timed exercise: the
-application selects a meaningful code entity, hides its implementation and
-checks the restored body by rebuilding the project and running its tests.
+CppDefense turns a CMake-based C++ project into a timed code-restoration
+exercise. It discovers suitable functions, selects one reproducibly, hides its
+body, accepts a body-only answer, then runs CMake, the build, and CTest in an
+isolated workspace. The repository contains both the original local CLI and a
+web platform for students, teachers, and administrators.
 
-The original project is never modified. All preparation and validation happen
-inside isolated working copies.
+## Highlights
 
-## Why this project exists
+- C++23 core, interactive `cpp-defense` CLI, and headless JSON worker;
+- deterministic candidate selection and UUID-scoped workspaces;
+- Go HTTP backend with GitHub OAuth, server-side sessions, CSRF, RBAC, and
+  object-scoped authorization;
+- reviewed group/lab ZIP import with traversal and resource-exhaustion guards;
+- PostgreSQL state, immutable submission versions, and S3-compatible storage;
+- persistent defense queue with leases, heartbeats, retries, and audit events;
+- rootless Podman sandbox with no network and CPU, memory, PID, filesystem,
+  timeout, and log limits;
+- role-based web UI, animated function wheel, masked repository browser,
+  resizable source/answer panes, and readable compilation reports;
+- Linux, macOS, and Windows C++ CI plus Go, contract, and deployment checks.
 
-CppDefense is designed for students who can read completed C++ code but want
-to practice reproducing it under defense-like conditions. Instead of asking a
-fixed question, it analyzes the selected project and creates an exercise from
-its real functions and types.
+## How a web defense works
 
-The result is useful both as a training tool and as a compact example of a
-modern C++ application with explicit errors, filesystem safety, process
-management, testing and layered architecture.
+1. A teacher or administrator imports a ZIP and approves its preview.
+2. The student signs in through GitHub and starts a defense for an immutable
+   submission version.
+3. The runner finds eligible production functions. Test files and build output
+   are excluded from candidate selection.
+4. A teacher confirms automatic or manual selection and the time limit.
+5. The runner masks the selected body; only then does the timer start.
+6. Each answer is patched into a disposable copy and checked with
+   CMake → build → CTest. Success finishes the defense; a failed attempt may be
+   retried before the deadline.
 
-## What it provides
+The local CLI performs the same basic exercise flow for trusted local projects.
+The original source tree is never modified.
 
-- automatic discovery of C and C++ source files;
-- selection from the largest functions or all supported entities;
-- deterministic function selection when an explicit 64-bit seed is supplied;
-- support for functions, methods, constructors, operators, classes, structs
-  and `enum class`;
-- body-only answers: declarations and outer braces cannot be replaced;
-- an isolated cached project and a separate temporary check workspace;
-- UUID-scoped session workspaces instead of a shared `cache/current`;
-- a headless `cpp-defense-worker` with a versioned JSON stdin/stdout protocol;
-- real validation through CMake configure, build and CTest;
-- retryable attempts within a monotonic time limit;
-- hard deadlines for compiler and test processes;
-- captured configure, build and test logs;
-- a final report containing status, attempts and elapsed time;
-- Linux, macOS and Windows CI coverage.
+## Repository map
 
-## Safety model
+| Path | Purpose |
+|---|---|
+| `apps/`, `include/`, `src/` | C++ CLI, worker, core, and infrastructure |
+| `backend/` | Go API, runner agent, PostgreSQL/S3 adapters, and browser UI |
+| `contracts/` | ZIP JSON Schemas, OpenAPI 3.1, and worker protocol v1 |
+| `deploy/` | Docker Compose, Caddy, rootless Podman, backup, and restore |
+| `tests/` | C++ and worker integration tests |
+| `docs/` | Architecture, deployment, operations, audit, and roadmap |
 
-CppDefense keeps three project states separate:
+See [Project structure](docs/PROJECT_STRUCTURE.md) for the detailed map.
 
-```text
-original project  →  masked session copy  →  temporary check copy
+## Build and verify
+
+Local CLI requirements are a C++23 compiler and CMake 3.24+:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 2
+ctest --test-dir build --output-on-failure
 ```
 
-Only the temporary check copy receives the submitted body. Paths and symbolic
-links are validated before cache cleanup, and external commands are started
-without a command shell.
+The current C++ suite contains **105 CTest scenarios**. The Go backend requires
+Go 1.27.1; its normal gate is:
 
-CppDefense does execute the selected project's CMake configuration, binaries
-and tests. Projects should therefore be treated as trusted local code.
+```sh
+go -C backend test -race ./...
+go -C backend vet ./...
+node --check backend/webassets/static/app.js
+node --test backend/webassets/static/app_test.mjs
+```
 
-## Technical overview
+See [Local CLI usage](docs/USAGE.md), [Go backend](backend/README.md), and the
+[VPS deployment guide](docs/DEPLOYMENT_2.1.md) for complete instructions.
 
-The codebase is divided into reusable components:
+## Current deployment
 
-- `cpp-defense-core` — parsing, deterministic selection, timer and content
-  hashing without CLI or JSON dependencies;
-- `application` — defense use cases and session lifecycle;
-- `infrastructure` — files, parsing, workspaces and processes;
-- `ui` — command parsing and terminal interaction.
-- `worker` — JSON validation and safe workspace operations for
-  Backend/Runner integration.
+The documented small production target is one Ubuntu 22.04 VPS with 2 vCPU,
+4 GiB RAM, and roughly 120 GiB of storage, intended for about 10–20 registered
+users and one or two concurrent checks:
 
-The lightweight parser preserves byte offsets and line endings while ignoring
-comments, literals and preprocessor text during structural analysis. It is
-purpose-built for exercise generation rather than intended as a replacement
-for a complete compiler frontend.
+- Caddy terminates HTTPS for `cppdefense.jo-a1.ru`;
+- Docker Compose runs the backend, PostgreSQL, and MinIO;
+- a systemd service runs the Go Runner Agent as an unprivileged user;
+- rootless Podman starts a disposable container for every check.
 
-## Project status
-
-**Version: 2.1.0**
-
-The complete console workflow is preserved and the 2.1 web platform is
-included in the same repository. The project contains
-104 CTest scenarios, including worker protocol calls from Python and Go,
-deterministic selection, parallel session isolation, end-to-end retries,
-process timeouts and path safety.
-
-Current scope:
-
-- C++23 compiler required to build CppDefense;
-- CMake 3.20+ projects are supported as exercise targets;
-- local CLI sessions are process-local and are not restored after restart;
-- web defenses, attempts, compilation history and uploaded labs are persistent;
-- worker preparation state is persisted inside its runner-provided session directory;
-- highly macro-driven or exotic C++ syntax may be outside parser coverage.
+This single-host layout is economical but weaker than a separate runner host:
+untrusted code still shares the VPS kernel with the application services. Use a
+dedicated runner machine before increasing the threat model or concurrency.
 
 ## Documentation
 
-- [Usage](docs/USAGE.md) — build and use the local CLI.
-- [Architecture](docs/ARCHITECTURE.md) — components, data flow, invariants, and
+- [Architecture](docs/ARCHITECTURE.md) — components, data flow, state, and
   security boundaries.
-- [Project structure](docs/PROJECT_STRUCTURE.md) — where C++, Go, frontend,
-  API contracts, tests, and deployment files live.
-- [Go backend](backend/README.md) — local setup, storage, migrations, and tests.
-- [CppDefense 2.1 deployment](docs/DEPLOYMENT_2.1.md) — two-VM production setup,
-  backup, restore, and operations.
-- [UI preview](docs/UI_PREVIEW.html) — standalone mock page that can be opened
-  directly in a browser without PostgreSQL, OAuth, or the Go server.
-- Browser assets live in `backend/webassets`; HTTP handlers remain in
-  `backend/internal/transport/httpapi`, and versioned JSON contracts in
-  `contracts/`.
-- [Contracts](contracts/README.md) — versioned ZIP, HTTP, and worker interfaces.
-- [Roadmap](docs/ROADMAP.md) — implemented scope and next milestones.
-- [Security policy](SECURITY.md) and [release guide](docs/RELEASING.md).
+- [Contracts](contracts/README.md) — versioned integration boundaries.
+- [Roadmap](docs/ROADMAP.md), [security policy](SECURITY.md), and
+  [release guide](docs/RELEASING.md).
+- [UI preview](docs/UI_PREVIEW.html) — a standalone browser mock.
+
+Every Markdown document has an English canonical version and a linked Russian
+translation. Technical schemas and executable examples remain language-neutral.
 
 ## License
 
-Current licensing terms are in the [CppDefense Proprietary Source-Available
-License](LICENSE). Repository viewing and GitHub forking for evaluation are
-permitted, as is use of an official hosted service under its user terms.
-Reuse, redistribution and self-hosting require written permission, except
-where an earlier license already grants those rights.
-
-Previously published MIT versions retain their MIT permissions. See the
-[license transition record](docs/LICENSING.md).
+The public repository is available for portfolio and employment review under
+the [CppDefense Proprietary Source-Available License](LICENSE). Viewing and
+GitHub forking for evaluation are permitted; redistribution, derivative use,
+and self-hosting require written permission unless an earlier license already
+granted those rights. See the [license transition record](docs/LICENSING.md).

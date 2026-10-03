@@ -1,5 +1,7 @@
 # License transition
 
+**English** | [Русский](ru/LICENSING.md)
+
 Copyright holder: Zakharev Georgii.
 
 The revision introducing this document replaces the root MIT notice with the

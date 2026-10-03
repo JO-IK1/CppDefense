@@ -1,5 +1,7 @@
 # Architecture
 
+**English** | [Русский](ru/ARCHITECTURE.md)
+
 CppDefense has two execution modes: a local C++ CLI and a web platform built
 around the same defense rules. The system favors a modular monolith and explicit
 process boundaries over microservices.
@@ -15,8 +17,9 @@ process boundaries over microservices.
   JSON stdin/stdout protocol.
 - `backend` is a Go modular monolith for HTTP, authentication, imports,
   defenses, queue management, persistence, and the web UI.
-- Runner Agent is a separate process on an isolated machine. It invokes the C++
-  worker and executes untrusted builds inside disposable containers.
+- Runner Agent is a separate process. It invokes the C++ worker and executes
+  untrusted builds inside disposable containers. The current low-cost VPS runs
+  it on the application host; the stronger target moves it to a dedicated VM.
 - PostgreSQL is the source of truth for metadata, state, and bounded compilation
   results. Private S3-compatible storage holds original and normalized archives.
 
@@ -208,7 +211,6 @@ stateDiagram-v2
   ready --> cancelled
   preparing --> cancelled
   active --> cancelled
-  error --> ready: audited recovery
   passed --> [*]
   expired --> [*]
   cancelled --> [*]
@@ -257,33 +259,40 @@ stateDiagram-v2
 
 ## Security boundaries
 
+The current small deployment is deliberately a modular monolith on one Ubuntu
+VPS. Caddy is the public edge; Docker Compose runs the backend, PostgreSQL, and
+MinIO; systemd runs the unprivileged Runner Agent; rootless Podman runs each
+untrusted build. Database, object storage, and backend ports bind only to
+loopback.
+
 ```mermaid
 flowchart LR
-  Internet((Internet)) --> Edge[Cloudflare / edge]
+  Internet((Internet)) --> Edge[Caddy HTTPS]
   GitHub[GitHub OAuth] --> Edge
-  Edge --> Backend[Backend VM]
+  Edge --> Backend[Backend container]
   Backend --> DB[(PostgreSQL)]
-  Backend --> Store[(S3 / MinIO)]
-  Backend -->|authenticated runner API| Runner[Runner VM]
-  Runner --> Container[Untrusted container]
+  Backend --> Store[(MinIO)]
+  Backend -->|authenticated runner API| Runner[Runner systemd service]
+  Runner --> Container[Rootless Podman container]
 ```
 
 Browser input, archives, projects, OAuth data, and runner responses are
 untrusted. ZIP extraction rejects traversal, links, devices, encrypted entries,
 nested archives, path collisions, and configured resource-limit violations.
 
-Student projects may execute arbitrary CMake and native code. Production checks
-must therefore run on a separate machine in a disposable, non-root container
-with no network, no service secrets, a read-only root filesystem, and strict
-CPU, memory, process, disk, time, and log limits. Container isolation is not
-treated as a perfect boundary.
+Student projects may execute arbitrary CMake and native code. The container has
+no network or service credentials, uses a read-only root filesystem, and has
+strict CPU, memory, process, disk, time, and log limits. Container isolation is
+not a perfect boundary: because the current deployment shares one kernel, a
+container escape could reach the application host. A dedicated runner machine
+is mandatory for a higher-risk or larger public deployment.
 
 | Risk | Mandatory control |
 |---|---|
 | Cross-user data access | Object-scoped authorization in service and SQL layers. |
 | ZIP traversal or resource exhaustion | Canonical paths, entry restrictions, streaming limits, and quotas. |
 | Stale or duplicate runner result | Atomic leases, hashed tokens, expiry, and idempotent completion. |
-| Host compromise by student code | Separate runner machine and disposable hardened container. |
+| Host compromise by student code | Disposable hardened container now; dedicated runner host before higher-risk production. |
 | Network or secret exfiltration | No container network, credentials, host mounts, or shared workspaces. |
 | Object/database inconsistency | Content hashes, immutable versions, reconciliation, and restore tests. |
 | Sensitive logs | Allowlisted structured metadata, truncation, redaction, and protected access. |

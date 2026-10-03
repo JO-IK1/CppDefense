@@ -6,8 +6,8 @@ info:
   license:
     name: Proprietary source-available
 servers:
-  - url: https://cppdefense.example
-    description: Placeholder production origin
+  - url: https://cppdefense.jo-a1.ru
+    description: Current small production deployment
 tags:
   - name: Health
   - name: Auth

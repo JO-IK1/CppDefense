@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cppdefense.example/schemas/worker/v1/request.schema.json",
+  "$id": "https://cppdefense.jo-a1.ru/schemas/worker/v1/request.schema.json",
   "title": "cpp-defense-worker request v1",
   "oneOf": [
     {

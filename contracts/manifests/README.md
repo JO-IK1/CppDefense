@@ -1,5 +1,7 @@
 # ZIP manifest contracts
 
+**English** | [Русский](README.ru.md)
+
 Canonical filename inside every import archive: `cppdefense-manifest.json`.
 
 - `group-v1.schema.json` validates one group archive with multiple student/lab projects.
@@ -17,6 +19,6 @@ JSON Schema validation is only the first validation layer. Backend must addition
 - root `CMakeLists.txt` and at least one C/C++ source;
 - immutable storage and atomic review/apply rules described in the architecture.
 
-`$id` uses a reserved example hostname until the canonical public project domain is chosen. Release CI may replace it only through an explicit contract version update.
+`$id` uses the current public project origin. A future identifier change must be explicit and reviewed like any other contract change.
 
 The `examples/` directory contains schema-valid manifests. `../tests/invalid-lab-zip-slip.json` is intentionally invalid and must remain rejected. CI validates schema documents, positive examples and this negative security fixture on every contract change.

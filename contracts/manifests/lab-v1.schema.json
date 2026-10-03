@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cppdefense.example/schemas/manifests/lab-v1.schema.json",
+  "$id": "https://cppdefense.jo-a1.ru/schemas/manifests/lab-v1.schema.json",
   "title": "CppDefense single lab import manifest v1",
   "type": "object",
   "additionalProperties": false,
