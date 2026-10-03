@@ -1,0 +1,60 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://cppdefense.jo-a1.ru
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Update application on VPS
+        run: |
+          ssh \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" \
+            bash -s -- "$GITHUB_SHA" <<'REMOTE'
+          set -eu
+          expected_sha=$1
+          repository=/opt/cppdefense/source
+
+          cd "$repository"
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "Deployment refused: tracked files on the VPS have local changes" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin main
+          test "$(git rev-parse origin/main)" = "$expected_sha"
+          git checkout main
+          git merge --ff-only "$expected_sha"
+          ./deploy/deploy-app.sh
+          REMOTE

@@ -2,15 +2,9 @@ name: Go Backend
 
 on:
   pull_request:
-    paths:
-      - "backend/**"
-      - "contracts/openapi/**"
-      - ".github/workflows/backend.yml"
+    branches: [main]
   push:
-    paths:
-      - "backend/**"
-      - "contracts/openapi/**"
-      - ".github/workflows/backend.yml"
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -49,7 +43,7 @@ jobs:
           --publish 127.0.0.1:9000:9000
           --env MINIO_ROOT_USER=cppdefense-test
           --env MINIO_ROOT_PASSWORD=cppdefense-test-secret
-          quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+          ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
           server /data
       - name: Wait for MinIO
         run: |

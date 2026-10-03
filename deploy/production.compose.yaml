@@ -44,6 +44,7 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   backend:
+    image: cppdefense-backend:local
     build:
       context: ..
       dockerfile: deploy/backend.Dockerfile
