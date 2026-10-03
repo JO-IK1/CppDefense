@@ -1,5 +1,7 @@
 # Local CLI usage
 
+**English** | [Русский](ru/USAGE.md)
+
 CppDefense turns a trusted CMake project into a timed code-restoration exercise.
 It builds and runs the selected project's code, so do not use the local CLI with
 untrusted projects.
@@ -7,7 +9,7 @@ untrusted projects.
 ## Requirements and build
 
 - C++23 compiler
-- CMake 3.20 or newer, including CTest
+- CMake 3.24 or newer, including CTest
 - a CMake-based C or C++ project with tests
 
 ```sh

@@ -126,7 +126,7 @@ func writeProblem(response http.ResponseWriter, request *http.Request, status in
 	response.Header().Set("Content-Type", "application/problem+json")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(problem{
-		Type:      "https://cppdefense.example/problems/" + code,
+		Type:      "https://cppdefense.jo-a1.ru/problems/" + code,
 		Title:     title,
 		Status:    status,
 		Code:      code,

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-origin=${1:?usage: ./load-test.sh https://cppdefense.example [requests] [concurrency]}
+origin=${1:?usage: ./load-test.sh https://cppdefense.jo-a1.ru [requests] [concurrency]}
 requests=${2:-1000}
 concurrency=${3:-100}
 

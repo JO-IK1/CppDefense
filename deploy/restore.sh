@@ -22,15 +22,17 @@ test -f "$backup/SHA256SUMS"
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 compose() {
-  docker compose --env-file "$script_dir/production.env" -f "$script_dir/production.compose.yaml" "$@"
+  docker compose --env-file "$script_dir/production.env" \
+    -f "$script_dir/production.compose.yaml" \
+    -f "$script_dir/caddy.compose.yaml" "$@"
 }
 
-compose stop backend cloudflared minio
+compose stop backend minio
 compose up -d postgres
 compose exec -T postgres pg_restore --clean --if-exists --no-owner \
   --username=cppdefense --dbname=cppdefense < "$backup/postgres.dump"
 compose --profile maintenance run -T --rm --no-deps volume-helper \
   'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar -C /data -xzf -' \
   < "$backup/minio.tar.gz"
-compose up -d
+compose up -d --no-build --pull missing postgres minio backend caddy
 printf 'Restore completed from %s\n' "$backup"

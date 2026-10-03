@@ -37,6 +37,9 @@ jobs:
         with:
           go-version: "1.27.1"
           cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
       - name: Start private MinIO for integration tests
         run: >-
           docker run --detach --name cppdefense-minio
@@ -66,5 +69,7 @@ jobs:
         run: go test -race ./...
       - name: Run static analysis
         run: go vet ./...
+      - name: Test browser behavior
+        run: node --test webassets/static/app_test.mjs
       - name: Build commands
-        run: go build ./cmd/cppdefense
+        run: go build ./cmd/cppdefense ./cmd/runner

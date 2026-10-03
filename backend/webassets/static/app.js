@@ -93,6 +93,7 @@ document.querySelector("#apply-import")?.addEventListener("click", async () => {
 let defenseID;
 let draftVersion = 1;
 let defensePoll;
+let defenseRefreshInFlight = false;
 let repositoryLoaded = false;
 let wheelCandidates = [];
 let wheelSpinAnimation;
@@ -158,6 +159,7 @@ function startWheel() {
 function renderWheelCandidates(candidates = []) {
   const wheel = document.querySelector("#function-wheel");
   if (!wheel) return;
+  candidates = Array.isArray(candidates) ? candidates : [];
   const fingerprint = candidates.map(candidate => `${candidate.id}:${candidate.signature}`).join("|");
   if (wheel.dataset.candidates === fingerprint) return;
   wheel.dataset.candidates = fingerprint;
@@ -218,34 +220,54 @@ document.querySelectorAll("[data-start-defense]").forEach(button => {
     document.querySelector("#result")?.classList.add("hidden");
     const value = await api("/api/v1/defenses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submission_version_id: button.dataset.startDefense }) });
     defenseID = value.id;
-    clearInterval(defensePoll);
-    defensePoll = setInterval(refreshDefense, 1500);
-    await refreshDefense();
+    stopDefensePolling();
+    await pollDefense();
   };
 });
 
 async function refreshDefense() {
-  if (!defenseID) return;
-  const value = await api(`/api/v1/defenses/${defenseID}`);
-  const status = document.querySelector("#defense-status");
-  const timer = document.querySelector("#timer");
-  draftVersion = value.draft_version || draftVersion;
-  renderWheelCandidates(value.wheel_candidates);
-  if (value.current_draft && !document.querySelector("#answer").value) document.querySelector("#answer").value = value.current_draft;
-  status.textContent = defenseStatusLabels[value.status] || value.status;
-  if (value.challenge && value.status === "active") {
-    settleWheel(value.selected_candidate_id, value.challenge);
-    status.textContent = `${value.challenge.signature} · строки ${value.challenge.begin_line}–${value.challenge.end_line}`;
-    if (!repositoryLoaded) {
-      document.querySelector("#source-code code").textContent = value.challenge.masked_source || "Замаскированный исходник недоступен";
-      await loadRepository(value.challenge.file_path);
+  if (!defenseID || defenseRefreshInFlight) return false;
+  defenseRefreshInFlight = true;
+  try {
+    const value = await api(`/api/v1/defenses/${defenseID}`);
+    const status = document.querySelector("#defense-status");
+    const timer = document.querySelector("#timer");
+    draftVersion = value.draft_version || draftVersion;
+    renderWheelCandidates(value.wheel_candidates);
+    if (value.current_draft && !document.querySelector("#answer").value) document.querySelector("#answer").value = value.current_draft;
+    status.textContent = defenseStatusLabels[value.status] || value.status;
+    if (value.challenge && value.status === "active") {
+      settleWheel(value.selected_candidate_id, value.challenge);
+      status.textContent = `${value.challenge.signature} · строки ${value.challenge.begin_line}–${value.challenge.end_line}`;
+      if (!repositoryLoaded) {
+        document.querySelector("#source-code code").textContent = value.challenge.masked_source || "Замаскированный исходник недоступен";
+        await loadRepository(value.challenge.file_path);
+      }
     }
+    if (value.status === "active" && value.deadline_at) {
+      const left = Math.max(0, Math.floor((Date.parse(value.deadline_at) - Date.now()) / 1000));
+      timer.textContent = `Осталось ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    } else timer.textContent = "";
+    return ["passed", "failed", "error", "expired", "cancelled"].includes(value.status);
+  } finally {
+    defenseRefreshInFlight = false;
   }
-  if (value.status === "active" && value.deadline_at) {
-    const left = Math.max(0, Math.floor((Date.parse(value.deadline_at) - Date.now()) / 1000));
-    timer.textContent = `Осталось ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
-  } else timer.textContent = "";
-  if (["passed", "failed", "error", "expired", "cancelled"].includes(value.status)) clearInterval(defensePoll);
+}
+
+function stopDefensePolling() {
+  clearTimeout(defensePoll);
+  defensePoll = undefined;
+}
+
+async function pollDefense() {
+  stopDefensePolling();
+  try {
+    if (await refreshDefense()) return;
+  } catch (error) {
+    const status = document.querySelector("#defense-status");
+    if (status) status.textContent = `Не удалось обновить защиту: ${error.message}. Повторяем…`;
+  }
+  defensePoll = setTimeout(pollDefense, 1500);
 }
 
 document.querySelector("#save-draft")?.addEventListener("click", async () => {
@@ -323,9 +345,56 @@ document.querySelector("#submit-attempt")?.addEventListener("click", async event
 document.querySelector("#cancel-defense")?.addEventListener("click", async () => {
   if (!defenseID || !confirm("Отменить активную защиту?")) return;
   await api(`/api/v1/defenses/${defenseID}/cancel`, { method: "POST" });
-  clearInterval(defensePoll);
+  stopDefensePolling();
   await refreshDefense();
 });
+
+const workspaceSplitKey = "cppdefense_workspace_split";
+
+function setWorkspaceSplit(workspace, percent) {
+  const value = Math.min(70, Math.max(22, Number(percent) || 33));
+  workspace.style.setProperty("--source-pane-width", `${value}%`);
+  workspace.querySelector("#workspace-resizer")?.setAttribute("aria-valuenow", String(Math.round(value)));
+  localStorage.setItem(workspaceSplitKey, String(value));
+}
+
+function initializeWorkspaceResizer() {
+  const workspace = document.querySelector(".code-workspace");
+  const resizer = document.querySelector("#workspace-resizer");
+  if (!workspace || !resizer) return;
+  setWorkspaceSplit(workspace, localStorage.getItem(workspaceSplitKey) || 33);
+
+  const resizeFromPointer = event => {
+    const bounds = workspace.getBoundingClientRect();
+    setWorkspaceSplit(workspace, (event.clientX - bounds.left) / bounds.width * 100);
+  };
+  resizer.addEventListener("pointerdown", event => {
+    resizer.setPointerCapture(event.pointerId);
+    workspace.classList.add("is-resizing");
+    resizeFromPointer(event);
+  });
+  resizer.addEventListener("pointermove", event => {
+    if (resizer.hasPointerCapture(event.pointerId)) resizeFromPointer(event);
+  });
+  const finishResize = event => {
+    if (resizer.hasPointerCapture(event.pointerId)) resizer.releasePointerCapture(event.pointerId);
+    workspace.classList.remove("is-resizing");
+  };
+  resizer.addEventListener("pointerup", finishResize);
+  resizer.addEventListener("pointercancel", finishResize);
+  resizer.addEventListener("dblclick", () => setWorkspaceSplit(workspace, 33));
+  resizer.addEventListener("keydown", event => {
+    const current = Number(resizer.getAttribute("aria-valuenow")) || 33;
+    if (event.key === "ArrowLeft") setWorkspaceSplit(workspace, current - 2);
+    else if (event.key === "ArrowRight") setWorkspaceSplit(workspace, current + 2);
+    else if (event.key === "Home") setWorkspaceSplit(workspace, 22);
+    else if (event.key === "End") setWorkspaceSplit(workspace, 70);
+    else return;
+    event.preventDefault();
+  });
+}
+
+initializeWorkspaceResizer();
 
 async function pollAttempt(id) {
   for (let count = 0; count < 120; count++) {

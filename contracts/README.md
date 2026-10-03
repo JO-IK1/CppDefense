@@ -1,5 +1,7 @@
 # CppDefense contracts
 
+**English** | [Русский](README.ru.md)
+
 This directory is the versioned boundary between Backend, Runner, C++ worker and import producers.
 
 - `manifests/`: ZIP manifest schemas and valid examples.

@@ -23,8 +23,8 @@
       </div>
     </section>
     <section class="defense-panel">
-      <div class="wheel-column"><p class="eyebrow">Случайный выбор</p><div class="function-wheel is-selected" aria-label="Колесо выбора функции"><div class="function-wheel__face"><span>Matrix::operator*()</span></div></div><p class="wheel-status">src/matrix.cpp:48–67</p><p class="timer">Осталось 14:32</p></div>
-      <div class="workspace-column"><div class="section-heading"><div><p class="eyebrow">Файл задания</p><h2>src/matrix.cpp</h2></div><span>Тело выбранной функции скрыто</span></div><div class="code-workspace"><section class="source-pane"><div class="pane-title"><span>Контекст проекта</span><span>только чтение</span></div><pre class="source-code"><code>#include "matrix.hpp"
+      <div class="wheel-column"><p class="eyebrow">Случайный выбор функции</p><div class="wheel-stage" aria-label="Колесо выбора функции"><div id="function-wheel" class="function-wheel is-selected"></div><div class="function-wheel__face"><span id="wheel-label">Matrix::operator*()</span></div></div><div class="wheel-meta"><p id="defense-status" class="wheel-status">src/matrix.cpp:48–67</p><p id="timer" class="timer">Осталось 14:32</p></div></div>
+      <div class="workspace-column"><div class="section-heading"><div><p class="eyebrow">Репозиторий задания</p><h2 id="source-title">src/matrix.cpp · функция скрыта</h2></div><span>Выбранная функция скрыта во всех просмотрах</span></div><div class="code-workspace"><section class="source-pane"><div class="pane-title"><span>Структура и код проекта</span><span>только чтение</span></div><div class="repository-browser"><nav id="repository-files" class="repository-files"><button class="repository-file is-active" type="button">src/matrix.cpp</button><button class="repository-file" type="button">include/matrix.hpp</button><button class="repository-file" type="button">CMakeLists.txt</button></nav><pre id="source-code" class="source-code"><code>#include "matrix.hpp"
 
 Matrix::Matrix(std::size_t rows, std::size_t cols)
     : rows_(rows), cols_(cols), data_(rows * cols) {}
@@ -39,10 +39,10 @@ Matrix Matrix::operator*(const Matrix&amp; other) const {
 
 bool Matrix::empty() const {
     return data_.empty();
-}</code></pre></section><section class="editor-column"><div class="pane-title"><span>Ваш ответ</span><span>без внешних скобок</span></div><textarea rows="20" spellcheck="false" placeholder="Введите реализацию функции…">Matrix result(rows_, other.cols_);
+}</code></pre></div></section><div id="workspace-resizer" class="workspace-resizer" role="separator" aria-label="Изменить ширину панелей" aria-orientation="vertical" aria-valuemin="22" aria-valuemax="70" aria-valuenow="33" tabindex="0" title="Перетащите, чтобы изменить ширину. Двойной щелчок возвращает 33/67."></div><section class="editor-column"><div class="pane-title"><span>Ваш ответ</span><span>без внешних скобок</span></div><textarea id="answer" rows="20" spellcheck="false" placeholder="Введите реализацию функции…">Matrix result(rows_, other.cols_);
 for (std::size_t i = 0; i &lt; rows_; ++i) {
     // Продолжите реализацию…
-}</textarea><div class="actions"><button class="secondary-button">Сохранить черновик</button><button>Отправить на проверку</button><button class="danger-button">Отменить</button></div></section></div></div>
+}</textarea><div class="actions"><button id="save-draft" class="secondary-button">Сохранить черновик</button><button id="submit-attempt">Отправить на проверку</button><button id="cancel-defense" class="danger-button">Отменить</button></div><div id="result" class="attempt-result hidden"></div></section></div></div>
     </section>
   </main>
   <footer>CppDefense 2.1.0 <span>·</span> UI preview</footer>
