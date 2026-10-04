@@ -543,7 +543,7 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 			} else {
 				_, e = tx.Exec(ctx, `update defense_candidates set masked_source=$2 where id=$1 and is_selected`, *selectedID, input.MaskedSource)
 				if e == nil {
-					_, e = tx.Exec(ctx, `update defenses set status='active',started_at=clock_timestamp(),deadline_at=clock_timestamp()+make_interval(secs=>time_limit_seconds) where id=$1 and status='preparing'`, defense)
+					_, e = tx.Exec(ctx, `update defenses set status='active',started_at=statement_timestamp(),deadline_at=statement_timestamp()+make_interval(secs=>time_limit_seconds) where id=$1 and status='preparing'`, defense)
 				}
 			}
 			if e != nil {
