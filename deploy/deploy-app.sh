@@ -5,6 +5,21 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$script_dir"
 
 test -s production.env
+runner_candidate="$script_dir/.cppdefense-runner.new"
+cleanup() {
+  rm -f "$runner_candidate"
+}
+trap cleanup EXIT HUP INT TERM
+
+/usr/local/bin/go \
+  -C "$script_dir/../backend" \
+  build \
+  -trimpath \
+  -ldflags="-s -w" \
+  -o "$runner_candidate" \
+  ./cmd/runner
+chmod 0755 "$runner_candidate"
+
 compose() {
   docker compose \
     --env-file production.env \
@@ -22,6 +37,7 @@ compose build backend
 compose up -d --no-build --pull missing postgres minio backend caddy
 
 if ./healthcheck.sh; then
+  sudo -n /usr/local/sbin/cppdefense-install-runner
   printf 'Deployment completed successfully\n'
   exit 0
 fi
