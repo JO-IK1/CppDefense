@@ -91,17 +91,27 @@ func (h *defenseHTTP) configure(w http.ResponseWriter, r *http.Request) {
 		SelectionMode    string `json:"selection_mode"`
 		CandidateID      string `json:"candidate_id"`
 		TimeLimitSeconds int    `json:"time_limit_seconds"`
+		WheelSize        int    `json:"wheel_size"`
+		EntityMode       string `json:"entity_mode"`
 	}
-	if !decodeJSON(w, r, &input) || !validIdempotencyKey(r) || (input.SelectionMode == "manual" && !uuidPattern.MatchString(input.CandidateID)) {
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	validSelection := input.SelectionMode == "automatic" || input.SelectionMode == "manual"
+	validEntityMode := input.EntityMode == "functions_only" || input.EntityMode == "functions_classes_structs"
+	validCandidate := (input.SelectionMode == "automatic" && input.CandidateID == "") ||
+		(input.SelectionMode == "manual" && uuidPattern.MatchString(input.CandidateID))
+	if !validIdempotencyKey(r) || !validSelection || !validEntityMode || !validCandidate ||
+		input.TimeLimitSeconds < 60 || input.TimeLimitSeconds > 1800 || input.WheelSize < 2 || input.WheelSize > 12 {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Defense configuration is invalid")
 		return
 	}
-	value, e := h.repository.Configure(r.Context(), actor.ID, r.PathValue("defense_id"), input.SelectionMode, input.CandidateID, input.TimeLimitSeconds)
+	value, e := h.repository.Configure(r.Context(), actor.ID, r.PathValue("defense_id"), input.SelectionMode, input.CandidateID, input.EntityMode, input.TimeLimitSeconds, input.WheelSize)
 	if e != nil {
 		h.fail(w, r, e)
 		return
 	}
-	if e = h.auth.audit.Record(r.Context(), audit.Event{ActorID: &actor.ID, ActorKind: "user", Action: "defense.configure", TargetType: "defense", TargetID: &value.ID, RequestID: RequestID(r.Context()), Metadata: map[string]any{"selection_mode": input.SelectionMode}}); e != nil {
+	if e = h.auth.audit.Record(r.Context(), audit.Event{ActorID: &actor.ID, ActorKind: "user", Action: "defense.configure", TargetType: "defense", TargetID: &value.ID, RequestID: RequestID(r.Context()), Metadata: map[string]any{"selection_mode": input.SelectionMode, "entity_mode": input.EntityMode, "wheel_size": input.WheelSize, "time_limit_seconds": input.TimeLimitSeconds}}); e != nil {
 		writeProblem(w, r, 500, "AUDIT_WRITE_FAILED", "Could not record defense configuration")
 		return
 	}
@@ -162,14 +172,14 @@ func (h *defenseHTTP) repositoryFile(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, r, 422, "UNSUPPORTED_FILE", "Only UTF-8 text files up to 2 MiB can be viewed")
 			return
 		}
-		if wanted == access.SelectedFile {
+		if access.MaskSelected && wanted == access.SelectedFile {
 			content, e = maskRepositoryBody(content, access.BodyBegin, access.BodyEnd)
 			if e != nil {
 				h.fail(w, r, e)
 				return
 			}
 		}
-		writeJSON(w, 200, map[string]any{"path": wanted, "content": string(content), "masked": wanted == access.SelectedFile})
+		writeJSON(w, 200, map[string]any{"path": wanted, "content": string(content), "masked": access.MaskSelected && wanted == access.SelectedFile})
 		return
 	}
 	writeProblem(w, r, 404, "NOT_FOUND", "Repository file was not found")

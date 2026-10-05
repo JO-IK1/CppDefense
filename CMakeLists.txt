@@ -180,6 +180,7 @@ set(PROJECT_SCANNER_TEST_CASES
   skip-excluded-directories
   skip-excluded-directories-case-insensitive
   skip-test-source-files
+  include-test-source-files
   custom-excluded-directories
   absolute-paths
   skip-symbolic-links

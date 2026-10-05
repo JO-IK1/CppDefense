@@ -40,7 +40,8 @@ func (r *AdminRepository) ListPendingLinks(ctx context.Context, actor string) ([
 		left join student_records sr on sr.user_id is null and sr.status='unclaimed' and sr.github_login_expected=gi.login
 		  and (actor.role='admin' or exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=actor.id))
 		left join groups g on g.id=sr.group_id
-		where u.status='pending' and (actor.role='admin' or sr.id is not null)
+		where (u.status='pending' or (u.status='active' and u.role='student' and not exists(select 1 from student_records linked where linked.user_id=u.id and linked.status='claimed')))
+		  and (actor.role='admin' or sr.id is not null)
 		order by gi.login,g.code`)
 	if e != nil {
 		return nil, e

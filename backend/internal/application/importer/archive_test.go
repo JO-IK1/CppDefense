@@ -40,6 +40,36 @@ func TestAnalyzeLabAndNormalizeProject(t *testing.T) {
 	}
 }
 
+func TestAnalyzeAcceptsAndIgnoresLegacyDefenseSettings(t *testing.T) {
+	data := archive(t, map[string]string{
+		ManifestName:             `{"schema_version":1,"kind":"lab","group_code":"iu7-21b","lab_code":"lab-01","student":{"github_login":"student-one"},"project_path":"project","time_limit":600,"time_limit_seconds":900,"top_n":7}`,
+		"project/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)",
+		"project/main.cpp":       "int main() { return 0; }",
+	})
+	analysis, err := Analyze(data, "lab", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analysis.Projects) != 1 {
+		t.Fatalf("projects = %d, want 1", len(analysis.Projects))
+	}
+}
+
+func TestAnalyzeGroupAcceptsLegacyDefenseSettingsAtEveryOldLocation(t *testing.T) {
+	data := archive(t, map[string]string{
+		ManifestName:             `{"schema_version":1,"kind":"group","group_code":"iu7-21b","time_limit":600,"top_n":5,"items":[{"lab_code":"lab-01","student":{"github_login":"student-one"},"project_path":"project","time_limit_seconds":900,"top_n":7}]}`,
+		"project/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)",
+		"project/main.cpp":       "int main() { return 0; }",
+	})
+	analysis, err := Analyze(data, "group", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analysis.Projects) != 1 {
+		t.Fatalf("projects = %d, want 1", len(analysis.Projects))
+	}
+}
+
 func TestAnalyzeRejectsTraversal(t *testing.T) {
 	data := archive(t, map[string]string{
 		ManifestName:    `{"schema_version":1,"kind":"lab","group_code":"group","lab_code":"lab","student":{"github_login":"student"},"project_path":"project"}`,

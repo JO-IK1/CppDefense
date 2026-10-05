@@ -35,7 +35,7 @@ bool IsSupportedSourceFile(const std::filesystem::path& file_path,
       stem == "test" || stem == "tests" || stem.starts_with("test_") ||
       stem.starts_with("tests_") || stem.ends_with("_test") ||
       stem.ends_with("_tests");
-  if (test_file) return false;
+  if (test_file && !options.include_test_sources) return false;
 
   return std::find(options.source_extensions.begin(), options.source_extensions.end(),
                    extension) != options.source_extensions.end();

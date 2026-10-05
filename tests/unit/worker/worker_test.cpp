@@ -21,6 +21,8 @@ constexpr std::string_view kSessionOne =
     "0199a123-4568-7abc-8def-0123456789ab";
 constexpr std::string_view kSessionTwo =
     "0199a123-4569-7abc-8def-0123456789ab";
+constexpr std::string_view kSessionThree =
+    "0199a123-4570-7abc-8def-0123456789ab";
 
 class TemporaryDirectory {
  public:
@@ -125,6 +127,14 @@ bool TestSha256() {
 bool TestAnalyzeAndPrepare() {
   TemporaryDirectory temporary;
   const fs::path project = CreateProject(temporary.path(), kSessionOne);
+  Write(project / "src/model.hpp",
+        "class Player {\n"
+        " public:\n"
+        "  int score = 0;\n"
+        "};\n"
+        "struct Config {\n"
+        "  bool enabled = true;\n"
+        "};\n");
 
   const Json analyze = Run(
       temporary.path(),
@@ -133,10 +143,22 @@ bool TestAnalyzeAndPrepare() {
                {"parser_options",
                 {{"ignored_directories", {"generated"}}}}}));
   bool passed = Expect(analyze.at("status") == "ok", "analysis succeeds");
-  passed &= Expect(analyze.at("result").at("source_file_count") == 1,
+  passed &= Expect(analyze.at("result").at("source_file_count") == 4,
                    "analysis reports source files");
-  passed &= Expect(analyze.at("result").at("function_count") == 2,
-                   "analysis reports functions");
+  passed &= Expect(analyze.at("result").at("function_count") == 6,
+                   "analysis reports all supported entities");
+  bool saw_class = false;
+  bool saw_struct = false;
+  bool saw_test = false;
+  for (const auto& candidate : analyze.at("result").at("candidates")) {
+    saw_class |= candidate.at("entity_type") == "class";
+    saw_struct |= candidate.at("entity_type") == "struct";
+    saw_test |= candidate.at("is_test_file").get<bool>();
+  }
+  passed &= Expect(saw_class && saw_struct,
+                   "analysis exposes classes and structures");
+  passed &= Expect(saw_test,
+                   "analysis keeps test entities for teacher manual selection");
 
   const Json first = Prepare(temporary.path(), kSessionOne, "42", "02");
   const Json second = Prepare(temporary.path(), kSessionOne, "42", "03");
@@ -150,31 +172,37 @@ bool TestAnalyzeAndPrepare() {
   passed &= Expect(Read(project / "src/math.cpp").find("a + b") !=
                        std::string::npos,
                    "analysis never modifies the input project");
-  const auto& selected = first.at("result").at("selected_function");
-  const auto original = Read(project / selected.at("file_path").get<std::string>());
-  const auto body_begin = selected.at("body_begin").get<std::size_t>();
-  const auto body_end = selected.at("body_end").get<std::size_t>();
-  const auto original_body = original.substr(body_begin + 1, body_end - body_begin - 2);
   const auto masked = first.at("result").at("masked_source").get<std::string>();
-  passed &= Expect(masked.find(original_body) == std::string::npos,
-                   "prepared source hides the selected implementation");
-  passed &= Expect(masked.find("/* TODO */") != std::string::npos,
-                   "prepared source marks the missing implementation");
+  passed &= Expect(masked.empty(),
+                   "catalog analysis does not mask a candidate before teacher configuration");
 
   const Json conflict = Prepare(temporary.path(), kSessionOne, "43", "04");
   passed &= Expect(conflict.at("status") == "error" &&
                        conflict.at("error").at("code") == "SESSION_CONFLICT",
                    "different preparation cannot overwrite saved state");
-  CreateProject(temporary.path(), kSessionTwo);
   const Json manual = Run(
       temporary.path(),
-      Request("prepare_defense", kSessionTwo,
+      Request("prepare_defense", kSessionOne,
               {{"project_root", "project"}, {"top_n", 2}, {"seed", "42"},
                {"selected_index", 1}},
               "06"));
-  passed &= Expect(manual.at("status") == "ok" &&
-                       manual.at("result").at("selected_index") == 1,
-                   "teacher-selected wheel index overrides the automatic result");
+  const bool manual_ok = manual.at("status") == "ok";
+  if (!manual_ok) {
+    std::cerr << "Second preparation response: " << manual.dump() << '\n';
+  }
+  passed &= Expect(manual_ok, "teacher-configured preparation succeeds after catalog analysis");
+  if (manual_ok) {
+    passed &= Expect(manual.at("result").at("selected_index") == 1,
+                     "teacher-selected wheel index overrides the automatic result");
+    passed &= Expect(manual.at("result").at("masked_source")
+                         .get<std::string>()
+                         .find("/* TODO */") != std::string::npos,
+                     "teacher-selected entity is masked in the second preparation phase");
+  }
+  passed &= Expect(
+      fs::is_regular_file(temporary.path() / kSessionOne /
+                          "defense-challenge-state.json"),
+      "teacher-configured challenge keeps separate idempotency state");
   return passed;
 }
 
@@ -197,6 +225,7 @@ bool TestMaterializeBodyWithoutOuterBraces() {
                {"output_root", "attempts/one"},
                {"selected_function",
                 {{"function_name", selected.at("function_name")},
+                 {"entity_type", selected.at("entity_type")},
                  {"file_path", selected.at("file_path")},
                  {"signature_begin", selected.at("signature_begin")},
                  {"body_begin", selected.at("body_begin")},
@@ -218,6 +247,81 @@ bool TestMaterializeBodyWithoutOuterBraces() {
   passed &= Expect(materialized.at("result").at("answer_sha256") ==
                        cpp_defense::Sha256(answer),
                    "materialization reports the answer digest");
+  return passed;
+}
+
+bool TestMaterializeClassBody() {
+  TemporaryDirectory temporary;
+  const fs::path project = CreateProject(temporary.path(), kSessionThree);
+  Write(project / "src/model.hpp",
+        "class Player {\n"
+        " public:\n"
+        "  int score = 0;\n"
+        "};\n");
+  fs::create_directories(temporary.path() / kSessionThree / "attempts");
+
+  const Json analyzed = Run(
+      temporary.path(),
+      Request("analyze_project", kSessionThree,
+              {{"project_root", "project"}}, "07"));
+  if (!Expect(analyzed.at("status") == "ok", "class analysis succeeds")) {
+    return false;
+  }
+
+  std::size_t selected_index = 0;
+  bool found = false;
+  const auto& catalog = analyzed.at("result").at("candidates");
+  for (std::size_t index = 0; index < catalog.size(); ++index) {
+    if (catalog.at(index).at("entity_type") == "class" &&
+        catalog.at(index).at("function_name") == "Player") {
+      selected_index = index;
+      found = true;
+      break;
+    }
+  }
+  if (!Expect(found, "class candidate is available for manual selection")) {
+    return false;
+  }
+
+  const Json prepared = Run(
+      temporary.path(),
+      Request("prepare_defense", kSessionThree,
+              {{"project_root", "project"},
+               {"seed", "42"},
+               {"selected_index", selected_index}},
+              "08"));
+  if (!Expect(prepared.at("status") == "ok", "class preparation succeeds")) {
+    return false;
+  }
+
+  const Json selected = prepared.at("result").at("selected_function");
+  const std::string answer = "\n public:\n  int score = 42;\n";
+  const Json materialized = Run(
+      temporary.path(),
+      Request("materialize_attempt", kSessionThree,
+              {{"project_root", "project"},
+               {"output_root", "attempts/class"},
+               {"selected_function",
+                {{"function_name", selected.at("function_name")},
+                 {"entity_type", selected.at("entity_type")},
+                 {"file_path", selected.at("file_path")},
+                 {"signature_begin", selected.at("signature_begin")},
+                 {"body_begin", selected.at("body_begin")},
+                 {"body_end", selected.at("body_end")},
+                 {"source_sha256", selected.at("source_sha256")}}},
+               {"answer", answer}},
+              "09"));
+
+  const fs::path output_file = temporary.path() / kSessionThree /
+                               "attempts/class/src/model.hpp";
+  bool passed = Expect(materialized.at("status") == "ok",
+                       "class materialization succeeds");
+  passed &= Expect(Read(output_file).find("int score = 42;") !=
+                       std::string::npos,
+                   "manual class answer replaces the selected class body");
+  passed &= Expect(Read(project / "src/model.hpp").find("int score = 0;") !=
+                       std::string::npos,
+                   "class materialization leaves input immutable");
   return passed;
 }
 
@@ -246,6 +350,7 @@ bool TestInvalidInputsAndSourceChange() {
                {"output_root", "attempts/changed"},
                {"selected_function",
                 {{"function_name", selected.at("function_name")},
+                 {"entity_type", selected.at("entity_type")},
                  {"file_path", selected.at("file_path")},
                  {"signature_begin", selected.at("signature_begin")},
                  {"body_begin", selected.at("body_begin")},
@@ -293,6 +398,7 @@ int main() {
   passed &= TestSha256();
   passed &= TestAnalyzeAndPrepare();
   passed &= TestMaterializeBodyWithoutOuterBraces();
+  passed &= TestMaterializeClassBody();
   passed &= TestInvalidInputsAndSourceChange();
   passed &= TestParallelSessionsAreIsolated();
   return passed ? 0 : 1;

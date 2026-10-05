@@ -24,10 +24,22 @@ window.addEventListener("unhandledrejection", event => {
   alert(event.reason?.message || "Операция не выполнена");
 });
 
+class ApiError extends Error {
+  constructor(status, problem) {
+    super(problem.title || `HTTP ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.problem = problem;
+  }
+}
+
 async function api(url, options = {}) {
   options.headers = { ...(options.headers || {}), "X-CSRF-Token": csrf(), "Idempotency-Key": options.idempotency || uuid() };
   const response = await fetch(url, options);
-  if (!response.ok) throw new Error((await response.json().catch(() => ({ title: response.statusText }))).title);
+  if (!response.ok) {
+    const problem = await response.json().catch(() => ({ title: response.statusText }));
+    throw new ApiError(response.status, problem);
+  }
   if (response.status === 204) return null;
   return response.json();
 }
@@ -60,9 +72,40 @@ document.querySelector("#group-form")?.addEventListener("submit", async event =>
 document.querySelector("#lab-form")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = new FormData(event.target);
-  await api(`/api/v1/groups/${form.get("group_id")}/labs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: form.get("code"), name: form.get("name"), time_limit_seconds: +form.get("time_limit_seconds"), top_n: +form.get("top_n") }) });
+  await api(`/api/v1/groups/${form.get("group_id")}/labs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: form.get("code"), name: form.get("name"), description: form.get("description") }) });
   alert("Лабораторная создана");
 });
+
+function renderOperationResult(root, value, error = false) {
+  root.replaceChildren();
+  const card = node("div", `operation-card ${error ? "operation-card--error" : "operation-card--success"}`);
+  card.append(node("strong", "", error ? "Операция не выполнена" : "Готово"));
+  if (error) {
+    const problem = value?.problem || {};
+    card.append(node("p", "", problem.title || value.message || "Неизвестная ошибка"));
+    const details = node("dl", "operation-details");
+    [["Код", problem.code || `HTTP_${value.status || "ERROR"}`], ["Request ID", problem.request_id], ["Проблемный файл", problem.file]].forEach(([label, content]) => {
+      if (!content) return;
+      details.append(node("dt", "", label), node("dd", "", String(content)));
+    });
+    card.append(details);
+  } else {
+    card.append(node("p", "", `Импорт ${value.id || ""} загружен и проверен.`));
+    if (value.original_sha256) card.append(node("code", "", value.original_sha256));
+  }
+  root.append(card);
+}
+
+async function renderImportOperation(root, operation) {
+  try {
+    const value = await operation();
+    renderOperationResult(root, value);
+    return value;
+  } catch (error) {
+    renderOperationResult(root, error, true);
+    return null;
+  }
+}
 
 document.querySelector("#import-form")?.addEventListener("submit", async event => {
   event.preventDefault();
@@ -71,23 +114,26 @@ document.querySelector("#import-form")?.addEventListener("submit", async event =
   payload.set("group_id", form.get("group_id"));
   payload.set("kind", form.get("kind"));
   payload.set("archive", form.get("archive"));
-  const value = await api("/api/v1/imports", { method: "POST", body: payload });
-  document.querySelector("#import-result").textContent = JSON.stringify(value, null, 2);
-  document.querySelector('#review-form [name="import_id"]').value = value.id;
-  document.querySelector('#review-form [name="archive_sha256"]').value = value.original_sha256;
+  const result = document.querySelector("#import-result");
+  const value = await renderImportOperation(result, () => api("/api/v1/imports", { method: "POST", body: payload }));
+  if (value) {
+    document.querySelector('#review-form [name="import_id"]').value = value.id;
+    document.querySelector('#review-form [name="archive_sha256"]').value = value.original_sha256;
+  }
 });
 
 document.querySelector("#review-form")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = new FormData(event.target);
   const id = form.get("import_id");
-  const value = await api(`/api/v1/imports/${id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: form.get("decision"), archive_sha256: form.get("archive_sha256"), checklist: { paths_checked: form.get("paths_checked") === "on", ownership_checked: form.get("ownership_checked") === "on" }, reason: form.get("reason") }) });
-  document.querySelector("#import-result").textContent = JSON.stringify(value, null, 2);
+  const result = document.querySelector("#import-result");
+  await renderImportOperation(result, () => api(`/api/v1/imports/${id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: form.get("decision"), archive_sha256: form.get("archive_sha256"), checklist: { paths_checked: form.get("paths_checked") === "on", ownership_checked: form.get("ownership_checked") === "on" }, reason: form.get("reason") }) }));
 });
 
 document.querySelector("#apply-import")?.addEventListener("click", async () => {
   const id = document.querySelector('#review-form [name="import_id"]').value;
-  document.querySelector("#import-result").textContent = JSON.stringify(await api(`/api/v1/imports/${id}/apply`, { method: "POST" }), null, 2);
+  const result = document.querySelector("#import-result");
+  await renderImportOperation(result, () => api(`/api/v1/imports/${id}/apply`, { method: "POST" }));
 });
 
 let defenseID;
@@ -141,6 +187,10 @@ function positionWheelLabels(finalRotation = 0) {
   });
 }
 
+function selectedWheelRotation(selectedIndex, candidateCount) {
+  return candidateCount > 0 ? -selectedIndex * (360 / candidateCount) : 0;
+}
+
 function startWheel() {
   const wheel = document.querySelector("#function-wheel");
   const label = document.querySelector("#wheel-label");
@@ -150,7 +200,7 @@ function startWheel() {
   delete wheel.dataset.selectedId;
   wheel.style.transform = "rotate(0deg)";
   wheel.classList.remove("is-selected");
-  label.textContent = "Выбираем функцию…";
+  label.textContent = "Выбираем задание…";
   if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
     wheelSpinAnimation = wheel.animate([{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }], { duration: 900, iterations: Infinity, easing: "linear" });
   }
@@ -191,8 +241,7 @@ function settleWheel(selectedID, challenge) {
   const current = wheelRotation(wheel);
   wheelSpinAnimation?.cancel();
   wheel.dataset.selectedId = selectedID;
-  const step = 360 / wheelCandidates.length;
-  const finalRotation = -selectedIndex * step;
+  const finalRotation = selectedWheelRotation(selectedIndex, wheelCandidates.length);
   const normalizedCurrent = ((current % 360) + 360) % 360;
   const normalizedFinal = ((finalRotation % 360) + 360) % 360;
   const forward = (normalizedFinal - normalizedCurrent + 360) % 360;
@@ -209,7 +258,8 @@ function settleWheel(selectedID, challenge) {
   }).catch(() => {});
 }
 
-const defenseStatusLabels = { ready: "Ожидает подтверждения преподавателя", preparing: "Подготовка задания…", active: "Защита идёт", passed: "Защита успешно сдана", failed: "Защита не пройдена", error: "Ошибка подготовки защиты", expired: "Время защиты истекло", cancelled: "Защита отменена" };
+const defenseStatusLabels = { ready: "Ожидает настройки преподавателя", preparing: "Подготовка задания…", active: "Защита идёт", passed: "Защита успешно сдана", failed: "Защита не пройдена", error: "Ошибка подготовки защиты", expired: "Время защиты истекло", cancelled: "Защита отменена" };
+const preparationStageLabels = { analyzing_project: "Анализируем проект и ищем задания…", waiting_for_teacher: "Ожидаем настройки преподавателя", materializing_challenge: "Формируем выбранное задание…", ready: "Задание готово" };
 
 document.querySelectorAll("[data-start-defense]").forEach(button => {
   button.onclick = async () => {
@@ -235,7 +285,7 @@ async function refreshDefense() {
     draftVersion = value.draft_version || draftVersion;
     renderWheelCandidates(value.wheel_candidates);
     if (value.current_draft && !document.querySelector("#answer").value) document.querySelector("#answer").value = value.current_draft;
-    status.textContent = defenseStatusLabels[value.status] || value.status;
+    status.textContent = preparationStageLabels[value.preparation_stage] || defenseStatusLabels[value.status] || value.status;
     if (value.challenge && value.status === "active") {
       settleWheel(value.selected_candidate_id, value.challenge);
       status.textContent = `${value.challenge.signature} · строки ${value.challenge.begin_line}–${value.challenge.end_line}`;
@@ -419,37 +469,181 @@ document.querySelector("#load-history")?.addEventListener("click", async () => {
   root.replaceChildren(...value.items.map(attempt => createAttemptReport(attempt, true)));
 });
 
-document.querySelector("#load-pending-defenses")?.addEventListener("click", async () => {
+let teacherDefense;
+let teacherFiles = [];
+let teacherFilePath = "";
+const teacherSourceCache = new Map();
+
+const entityLabels = { function: "Функция", class: "Класс", struct: "Структура" };
+
+function teacherCandidateAllowed(candidate) {
+  const mode = document.querySelector('#configure-defense-form [name="entity_mode"]')?.value;
+  return mode === "functions_classes_structs" || candidate.entity_type === "function";
+}
+
+function setConfigurationError(message = "") {
+  const root = document.querySelector("#configuration-error");
+  if (!root) return;
+  root.textContent = message;
+  root.classList.toggle("hidden", !message);
+}
+
+function selectTeacherCandidate(candidate) {
+  const form = document.querySelector("#configure-defense-form");
+  form.elements.candidate_id.value = candidate.id;
+  const selected = document.querySelector("#selected-candidate");
+  selected.textContent = `${entityLabels[candidate.entity_type] || "Сущность"}: ${candidate.signature.trim()} · ${candidate.file_path}:${candidate.begin_line}–${candidate.end_line}${candidate.is_test_file ? " · тестовый файл" : ""}`;
+  document.querySelectorAll(".teacher-entity-option").forEach(option => option.classList.toggle("is-selected", option.dataset.candidateId === candidate.id));
+  setConfigurationError();
+}
+
+function renderTeacherEntities(path, source) {
+  const root = document.querySelector("#teacher-entity-list");
+  if (!root || !teacherDefense) return;
+  const candidates = (teacherDefense.candidate_catalog || []).filter(candidate => candidate.file_path === path && teacherCandidateAllowed(candidate));
+  if (!candidates.length) {
+    root.replaceChildren(node("div", "empty-state", "В этом файле нет доступных сущностей"));
+    return;
+  }
+  const lines = source.split("\n");
+  root.replaceChildren(...candidates.map(candidate => {
+    const button = node("button", "teacher-entity-option");
+    button.type = "button";
+    button.dataset.candidateId = candidate.id;
+    const title = node("span", "teacher-entity-option__title", `${entityLabels[candidate.entity_type] || candidate.entity_type} · ${candidate.function_name}`);
+    const meta = node("span", "teacher-entity-option__meta", `строки ${candidate.begin_line}–${candidate.end_line}${candidate.is_test_file ? " · тестовый файл" : ""}`);
+    const code = node("pre", "teacher-entity-option__code", lines.slice(Math.max(0, candidate.begin_line - 1), candidate.end_line).join("\n"));
+    button.append(title, meta, code);
+    button.onclick = () => selectTeacherCandidate(candidate);
+    if (document.querySelector('#configure-defense-form [name="candidate_id"]').value === candidate.id) button.classList.add("is-selected");
+    return button;
+  }));
+}
+
+async function openTeacherRepositoryFile(path) {
+  if (!teacherDefense) return;
+  teacherFilePath = path;
+  let value = teacherSourceCache.get(`${teacherDefense.id}:${path}`);
+  if (!value) {
+    value = await api(`/api/v1/defenses/${teacherDefense.id}/repository/file?path=${encodeURIComponent(path)}`);
+    teacherSourceCache.set(`${teacherDefense.id}:${path}`, value);
+  }
+  document.querySelector("#teacher-source-code code").textContent = value.content;
+  document.querySelectorAll("#teacher-repository-files button").forEach(button => button.classList.toggle("is-active", button.dataset.path === path));
+  renderTeacherEntities(path, value.content);
+}
+
+async function loadTeacherRepository() {
+  const value = await api(`/api/v1/defenses/${teacherDefense.id}/repository`);
+  teacherFiles = value.items;
+  const root = document.querySelector("#teacher-repository-files");
+  root.replaceChildren(...teacherFiles.map(item => {
+    const button = node("button", "repository-file", item.path);
+    button.type = "button";
+    button.dataset.path = item.path;
+    button.onclick = () => openTeacherRepositoryFile(item.path);
+    return button;
+  }));
+  const firstCandidate = (teacherDefense.candidate_catalog || []).find(teacherCandidateAllowed);
+  const initialPath = firstCandidate?.file_path || teacherFiles[0]?.path;
+  if (initialPath) await openTeacherRepositoryFile(initialPath);
+}
+
+function syncConfigurationMode() {
+  const form = document.querySelector("#configure-defense-form");
+  if (!form || !teacherDefense) return;
+  const manual = form.elements.selection_mode.value === "manual";
+  document.querySelector("#manual-candidate-workspace").classList.toggle("hidden", !manual);
+  document.querySelector("#selected-candidate").classList.toggle("hidden", !manual);
+  if (!manual) {
+    form.elements.candidate_id.value = "";
+    setConfigurationError();
+  } else if (teacherFilePath && teacherSourceCache.has(`${teacherDefense.id}:${teacherFilePath}`)) {
+    renderTeacherEntities(teacherFilePath, teacherSourceCache.get(`${teacherDefense.id}:${teacherFilePath}`).content);
+  }
+}
+
+async function choosePendingDefense(defense) {
+  teacherDefense = defense;
+  teacherFilePath = "";
+  const form = document.querySelector("#configure-defense-form");
+  form.classList.remove("hidden");
+  form.elements.defense_id.value = defense.id;
+  form.elements.candidate_id.value = "";
+  document.querySelector("#configuration-title").textContent = `${defense.student_login} · ${defense.lab_code}`;
+  document.querySelector("#configuration-hint").textContent = defense.lab_name;
+  document.querySelector("#selected-candidate").textContent = "В ручном режиме выберите функцию, класс или структуру.";
+  syncConfigurationMode();
+  await loadTeacherRepository();
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function loadPendingDefenses() {
   const value = await api("/api/v1/teacher/defenses/pending");
   const root = document.querySelector("#pending-defenses");
+  if (!value.items.length) {
+    root.replaceChildren(node("div", "empty-state", "Защит, ожидающих настройки, нет"));
+    return;
+  }
   root.replaceChildren(...value.items.map(defense => {
     const card = node("article", "card pending-defense");
-    card.append(node("h3", "", `${defense.student_login} · ${defense.lab_code} · ${defense.lab_name}`));
-    const list = node("div", "candidate-list");
-    defense.wheel_candidates.forEach(candidate => {
-      const button = node("button", "secondary-button", `${candidate.function_name} · ${candidate.file_path} · ${candidate.line_count} строк`);
-      button.type = "button";
-      button.title = candidate.signature;
-      button.onclick = () => {
-        document.querySelector('#configure-defense-form [name="defense_id"]').value = defense.id;
-        document.querySelector('#configure-defense-form [name="candidate_id"]').value = candidate.id;
-        document.querySelector('#configure-defense-form [name="selection_mode"]').value = "manual";
-      };
-      list.append(button);
-    });
-    card.append(list);
+    card.append(node("span", "badge", defense.lab_code), node("h3", "", defense.lab_name));
+    card.append(node("p", "pending-defense__student", `Студент: ${defense.student_login}`));
+    const button = node("button", "secondary-button", "Настроить защиту");
+    button.type = "button";
+    button.onclick = () => choosePendingDefense(defense);
+    card.append(button);
     return card;
   }));
+}
+
+document.querySelector("#load-pending-defenses")?.addEventListener("click", loadPendingDefenses);
+document.querySelector('#configure-defense-form [name="selection_mode"]')?.addEventListener("change", syncConfigurationMode);
+document.querySelector('#configure-defense-form [name="entity_mode"]')?.addEventListener("change", () => {
+  const form = document.querySelector("#configure-defense-form");
+  const selected = (teacherDefense?.candidate_catalog || []).find(candidate => candidate.id === form.elements.candidate_id.value);
+  if (selected && !teacherCandidateAllowed(selected)) {
+    form.elements.candidate_id.value = "";
+    document.querySelector("#selected-candidate").textContent = "Выбранная сущность недоступна в этом режиме. Выберите другую.";
+  }
+  if (teacherDefense && teacherFilePath && teacherSourceCache.has(`${teacherDefense.id}:${teacherFilePath}`)) {
+    renderTeacherEntities(teacherFilePath, teacherSourceCache.get(`${teacherDefense.id}:${teacherFilePath}`).content);
+  }
 });
 
 document.querySelector("#configure-defense-form")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = new FormData(event.target);
-  const id = form.get("defense_id");
   const mode = form.get("selection_mode");
-  await api(`/api/v1/defenses/${id}/configure`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection_mode: mode, candidate_id: mode === "manual" ? form.get("candidate_id") : "", time_limit_seconds: +form.get("time_limit_seconds") }) });
-  alert("Настройки сохранены. Подготовка защиты запущена");
-  document.querySelector("#load-pending-defenses").click();
+  const minutes = Number(form.get("time_limit_minutes"));
+  const wheelSize = Number(form.get("wheel_size"));
+  if (minutes < 1 || minutes > 30 || wheelSize < 2 || wheelSize > 12) {
+    setConfigurationError("Время должно быть от 1 до 30 минут, колесо — от 2 до 12 секторов.");
+    return;
+  }
+  if (mode === "manual" && !form.get("candidate_id")) {
+    setConfigurationError("Выберите сущность для восстановления.");
+    return;
+  }
+  const catalog = (teacherDefense?.candidate_catalog || []).filter(teacherCandidateAllowed);
+  const selected = catalog.find(candidate => candidate.id === form.get("candidate_id"));
+  const nonTestCandidates = catalog.filter(candidate => !candidate.is_test_file && candidate.id !== selected?.id);
+  const enoughCandidates = mode === "automatic"
+    ? nonTestCandidates.length >= wheelSize
+    : Boolean(selected) && nonTestCandidates.length >= wheelSize - 1;
+  if (!enoughCandidates) {
+    const available = mode === "automatic" ? nonTestCandidates.length : nonTestCandidates.length + (selected ? 1 : 0);
+    setConfigurationError(`Для колеса из ${wheelSize} секторов недостаточно подходящих сущностей. Доступно: ${available}. Уменьшите число секторов или смените режим.`);
+    return;
+  }
+  try {
+    await api(`/api/v1/defenses/${form.get("defense_id")}/configure`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection_mode: mode, candidate_id: mode === "manual" ? form.get("candidate_id") : "", entity_mode: form.get("entity_mode"), wheel_size: wheelSize, time_limit_seconds: minutes * 60 }) });
+    event.target.classList.add("hidden");
+    teacherDefense = undefined;
+    await loadPendingDefenses();
+  } catch (error) {
+    setConfigurationError(error.problem?.title || error.message);
+  }
 });
 
 document.querySelector("#submissions-form")?.addEventListener("submit", async event => {
@@ -466,26 +660,74 @@ document.querySelector("#submissions-form")?.addEventListener("submit", async ev
   }));
 });
 
-document.querySelector("#load-pending")?.addEventListener("click", async () => {
-  document.querySelector("#pending-result").textContent = JSON.stringify(await api("/api/v1/admin/pending-links"), null, 2);
-});
+async function loadPendingLinks() {
+  const value = await api("/api/v1/admin/pending-links");
+  const root = document.querySelector("#pending-result");
+  if (!value.items.length) {
+    root.replaceChildren(node("div", "empty-state", "Ожидающих привязки пользователей нет"));
+    return;
+  }
+  root.replaceChildren(...value.items.map(item => {
+    const card = node("article", "management-item");
+    card.append(node("strong", "", item.display_name || item.github_login), node("span", "", `GitHub: ${item.github_login}`));
+    card.append(node("span", "", item.group_code ? `Предложенная группа: ${item.group_code}` : "Совпадающая запись студента не найдена"));
+    if (item.student_record_id) {
+      const button = node("button", "secondary-button", "Выбрать связь");
+      button.type = "button";
+      button.onclick = () => {
+        const form = document.querySelector("#approve-link-form");
+        form.classList.remove("hidden");
+        form.elements.user_id.value = item.user_id;
+        form.elements.student_record_id.value = item.student_record_id;
+        document.querySelector("#link-summary").textContent = `${item.github_login} → группа ${item.group_code}`;
+      };
+      card.append(button);
+    }
+    return card;
+  }));
+}
+
+document.querySelector("#load-pending")?.addEventListener("click", loadPendingLinks);
 
 document.querySelector("#approve-link-form")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = new FormData(event.target);
   await api(`/api/v1/admin/pending-links/${form.get("user_id")}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_record_id: form.get("student_record_id"), reason: "Подтверждено через кабинет" }) });
-  alert("Студент привязан");
+  event.target.classList.add("hidden");
+  await loadPendingLinks();
 });
 
-document.querySelector("#load-users")?.addEventListener("click", async () => {
-  document.querySelector("#users-result").textContent = JSON.stringify(await api("/api/v1/admin/users"), null, 2);
-});
+async function loadUsers() {
+  const value = await api("/api/v1/admin/users");
+  const root = document.querySelector("#users-result");
+  const roleLabels = { student: "студент", teacher: "преподаватель", admin: "администратор" };
+  const statusLabels = { pending: "ожидает подтверждения", active: "активен", rejected: "отклонён", blocked: "заблокирован" };
+  root.replaceChildren(...value.items.map(item => {
+    const card = node("article", "management-item management-item--user");
+    const name = node("strong", "", item.display_name || item.github_login);
+    const summary = node("span", "", `@${item.github_login} · ${roleLabels[item.role] || "роль не назначена"} · ${statusLabels[item.status] || item.status}`);
+    const details = node("details", "technical-details");
+    details.append(node("summary", "", "Технические данные"), node("code", "", `User ID: ${item.id}\nGitHub ID: ${item.github_id}`));
+    const button = node("button", "secondary-button", "Изменить роль");
+    button.type = "button";
+    button.onclick = () => {
+      const form = document.querySelector("#role-form");
+      form.elements.user_id.value = item.id;
+      form.elements.role.value = item.role || "student";
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    card.append(name, summary, details, button);
+    return card;
+  }));
+}
+
+document.querySelector("#load-users")?.addEventListener("click", loadUsers);
 
 document.querySelector("#role-form")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = new FormData(event.target);
   await api(`/api/v1/admin/users/${form.get("user_id")}/role`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: form.get("role") }) });
-  alert("Роль обновлена");
+  await loadUsers();
 });
 
 document.querySelector("#teacher-form")?.addEventListener("submit", async event => {

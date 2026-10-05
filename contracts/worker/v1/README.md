@@ -14,7 +14,9 @@
 ## Commands
 
 - `analyze_project`: scans a project and returns all supported candidates.
-- `prepare_defense`: returns deterministic top-N and selected function for the supplied seed.
+- `prepare_defense`: returns the complete function/class/structure catalog; when
+  `selected_index` is supplied it also masks that exact entity. Test-source
+  candidates are tagged for backend policy enforcement.
 - `materialize_attempt`: copies the immutable input project into an output directory and substitutes the answer only if file digest and offsets still match.
 
 All paths are relative to runner-provided workspace. Worker joins and canonicalizes each path, then verifies the result remains beneath the workspace root. Symlinks are rejected.
@@ -23,7 +25,10 @@ Offsets are byte offsets in the exact UTF-8/source byte sequence whose SHA-256 i
 
 `signature_begin <= body_begin < body_end <= source_size`.
 
-The answer contains only the body contents, without the function's outer braces, exactly as in CLI v1. Nested blocks inside the answer are permitted. Worker preserves the original outer braces and signature. Before materialization worker verifies `source_sha256`; mismatch returns `SOURCE_CHANGED`.
+The answer contains only the entity body contents, without its outer braces.
+Nested blocks inside the answer are permitted. Worker preserves the original
+outer braces and signature. Before materialization worker verifies both the
+entity type and `source_sha256`; mismatch returns `SOURCE_CHANGED`.
 
 `seed` is encoded as a decimal string to avoid JSON/JavaScript precision loss. In addition to the schema pattern, both producer and worker must reject values above `18446744073709551615` (`uint64` maximum).
 

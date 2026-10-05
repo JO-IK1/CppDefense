@@ -67,11 +67,14 @@ and the submitted answer replaces only the contents between the recorded outer
 braces. Source hashes and byte offsets prevent applying an answer to changed
 input.
 
-Candidate selection is deterministic when a seed is supplied: the parser finds
-supported entities and builds the wheel from roughly one third random functions
-and two thirds of the largest functions. A stable 64-bit seed makes the result
-reproducible. The parser is intentionally lightweight and is not a full C++
-frontend.
+Candidate selection is deterministic when a seed is supplied. Before each
+defense the teacher chooses functions-only or functions/classes/structures and
+a 2–12 sector wheel. Automatic mode excludes test sources and fills roughly two
+thirds of the wheel with the largest eligible entities and one third with a
+seeded random selection. Manual mode fixes the teacher-selected entity as the
+winner; this explicit target may come from a test source, while automatically
+filled distractors may not. The parser is intentionally lightweight and is not
+a full C++ frontend.
 
 ## Web defense flow
 
@@ -81,11 +84,12 @@ frontend.
 3. A student starts a defense tied to one exact submission version.
 4. PostgreSQL queues the first preparation job. The runner analyses the project
    and returns the named wheel candidates.
-5. The teacher chooses the suggested function or one candidate manually and
-   confirms the defense time limit.
+5. The teacher chooses automatic or manual selection, the entity scope, a
+   1–30 minute limit, and a 2–12 sector wheel. Manual selection uses a full
+   read-only project viewer.
 6. The backend queues final preparation. Only after it finishes does the timer
    start and the student receive the repository browser, with the selected
-   function body masked in its source file.
+   selected entity body masked in its source file.
 7. Check jobs run the submitted body in the sandbox; the backend validates the
    lease and transition before committing the result and audit event.
 
@@ -110,11 +114,11 @@ sequenceDiagram
   R->>R: Discover wheel candidates
   R->>B: Complete analysis
   B-->>Teacher: Named candidate list
-  Teacher->>B: Confirm settings and function
+  Teacher->>B: Confirm settings and restoration entity
   B->>D: Queue final preparation
   R->>B: Return masked challenge
   B-->>Student: Start timer and expose repository browser
-  Student->>B: Submit function body
+  Student->>B: Submit restored entity body
   R->>R: Build and test in sandbox
   R->>B: Complete check with lease token
   B->>D: Commit result and audit event

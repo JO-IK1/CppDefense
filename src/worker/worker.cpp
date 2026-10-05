@@ -8,6 +8,7 @@
 #include "cpp_defense/infrastructure/session_id.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <map>
 #include <set>
 
@@ -18,6 +19,38 @@ struct Analysis {
   std::map<fs::path, std::string> sources;
   std::string fingerprint;
 };
+
+std::string EntityTypeName(CodeEntityType type) {
+  switch (type) {
+    case CodeEntityType::kFunction:
+      return "function";
+    case CodeEntityType::kClass:
+      return "class";
+    case CodeEntityType::kStruct:
+      return "struct";
+    case CodeEntityType::kEnumClass:
+      return "enum_class";
+  }
+  return "unknown";
+}
+
+bool IsTestFile(const fs::path& path) {
+  std::vector<std::string> parts;
+  for (const auto& part : path) {
+    auto value = part.string();
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    parts.push_back(std::move(value));
+  }
+  for (const auto& part : parts) {
+    if (part == "test" || part == "tests" || part == "testing") return true;
+  }
+  if (parts.empty()) return false;
+  auto stem = fs::path(parts.back()).stem().string();
+  return stem == "test" || stem == "tests" || stem.starts_with("test_") ||
+         stem.ends_with("_test") || stem.ends_with("_tests") ||
+         stem.find(".test") != std::string::npos;
+}
 
 Analysis Analyze(const fs::path& project, const Json& payload) {
   const auto files = ValidateTree(project);
@@ -30,6 +63,11 @@ Analysis Analyze(const fs::path& project, const Json& payload) {
   }
 
   ProjectScannerOptions options;
+  // The backend excludes tests from automatic wheels, but teachers must be
+  // able to inspect and explicitly select entities from test sources.
+  options.include_test_sources = true;
+  std::erase(options.excluded_directory_names, "test");
+  std::erase(options.excluded_directory_names, "tests");
   if (payload.contains("parser_options")) {
     const auto& config = payload["parser_options"];
     if (config.contains("ignored_directories")) {
@@ -53,11 +91,13 @@ Analysis Analyze(const fs::path& project, const Json& payload) {
     const auto parsed = parser.Parse(source, relative);
     if (!parsed) throw Error("PARSE_ERROR", "Source could not be parsed", "invalid_project");
     for (auto entity : *parsed) {
-      if (entity.type == CodeEntityType::kFunction) result.entities.push_back(std::move(entity));
+      if (entity.type != CodeEntityType::kEnumClass) {
+        result.entities.push_back(std::move(entity));
+      }
     }
     result.sources.emplace(relative, std::move(source));
   }
-  Require(result.entities.size() <= 10000, "PROJECT_LIMIT", "Too many function candidates");
+  Require(result.entities.size() <= 10000, "PROJECT_LIMIT", "Too many restoration candidates");
   std::sort(result.entities.begin(), result.entities.end(), CandidatePriorityCompare{});
   return result;
 }
@@ -70,13 +110,15 @@ Json Candidate(const CodeEntityInfo& entity, const std::string& source) {
   const auto signature = source.substr(entity.start_offset,
                                       entity.body_start_offset-entity.start_offset);
   Require(!signature.empty() && signature.size() <= 16384 && entity.name.size() <= 1024,
-          "PROJECT_LIMIT", "Function metadata exceeds protocol limits");
+          "PROJECT_LIMIT", "Entity metadata exceeds protocol limits");
   const auto body = source.substr(entity.body_start_offset+1,
                                  entity.body_end_offset-entity.body_start_offset-2);
-  return {{"function_name", entity.name}, {"file_path", entity.file_path.generic_string()},
+  return {{"function_name", entity.name}, {"entity_type", EntityTypeName(entity.type)},
+          {"is_test_file", IsTestFile(entity.file_path)},
+          {"file_path", entity.file_path.generic_string()},
           {"signature", signature}, {"signature_begin", entity.start_offset},
           {"body_begin", entity.body_start_offset}, {"body_end", entity.body_end_offset},
-          {"begin_line", entity.body_start_line}, {"end_line", entity.body_end_line},
+          {"begin_line", entity.start_line}, {"end_line", entity.end_line},
           {"line_count", entity.body_line_count()}, {"source_sha256", Sha256(source)},
           {"original_body_sha256", Sha256(body)}};
 }
@@ -144,16 +186,17 @@ Json Materialize(const fs::path& session, const fs::path& project, const Json& p
   const SimpleSourceParser parser;
   const auto parsed = parser.Parse(source, relative);
   Require(parsed.has_value(), "INVALID_PROJECT", "Selected source cannot be parsed");
+  const auto selected_type = selected.value("entity_type", "function");
   const auto match = std::find_if(parsed->begin(), parsed->end(), [&](const auto& entity) {
-    return entity.type == CodeEntityType::kFunction &&
+    return EntityTypeName(entity.type) == selected_type &&
            entity.start_offset == signature && entity.body_start_offset == begin &&
            entity.body_end_offset == end &&
            entity.name == selected["function_name"].get<std::string>();
   });
-  Require(match != parsed->end(), "INVALID_RANGE", "Selection is not a parsed function");
+  Require(match != parsed->end(), "INVALID_RANGE", "Selection is not a parsed entity");
   const auto answer = p["answer"].get<std::string>();
   Require(parser.ValidateBody(answer, relative).has_value(),
-          "INVALID_ANSWER", "Answer must stay inside the original function body");
+          "INVALID_ANSWER", "Answer must stay inside the original entity body");
 
   TemporaryTree staging(Resolve(session, ".attempt-" + NewSessionId(), false));
   fs::copy(project, staging.path(), fs::copy_options::recursive);
@@ -185,32 +228,37 @@ Json Execute(const fs::path& workspace, const Json& r) {
             {"function_count", candidates.size()}, {"candidates", candidates}};
   }
 
-  CandidatePicker picker(Seed(p["seed"]));
-  auto choice = picker.Pick(analysis.entities, p["top_n"].get<std::size_t>(),
-                            CandidateSelectionMode::kFunctionsOnly);
-  if (!choice) {
-    throw Error("NO_FUNCTION_CANDIDATES", "No suitable functions",
+  if (analysis.entities.empty()) {
+    throw Error("NO_RESTORATION_CANDIDATES",
+                "No suitable functions, classes or structures",
                 "invalid_project");
   }
-  if (p.contains("selected_index")) {
-    const auto selected_index = p["selected_index"].get<std::size_t>();
-    Require(selected_index < choice->candidates.size(), "INVALID_REQUEST",
-            "selected_index is outside the candidate wheel");
-    choice->selected_index = selected_index;
-  }
   auto candidates = Json::array();
-  for (std::size_t i = 0; i < choice->candidates.size(); ++i) {
-    const auto& entity = choice->candidates[i];
+  for (const auto& entity : analysis.entities) {
     candidates.push_back(Candidate(entity, analysis.sources.at(entity.file_path)));
   }
-  const auto& selected = choice->candidates[choice->selected_index];
-  const Json result{
-      {"candidates", candidates},
-      {"selected_index", choice->selected_index},
-      {"selected_function", candidates.at(choice->selected_index)},
-      {"masked_source", MaskedSource(selected, analysis.sources.at(selected.file_path))}};
+  std::size_t selected_index = 0;
+  std::string masked_source;
+  if (p.contains("selected_index")) {
+    selected_index = p["selected_index"].get<std::size_t>();
+    Require(selected_index < analysis.entities.size(), "INVALID_REQUEST",
+            "selected_index is outside the candidate catalog");
+    const auto& selected = analysis.entities[selected_index];
+    masked_source = MaskedSource(selected, analysis.sources.at(selected.file_path));
+  }
+  const Json result{{"candidates", candidates},
+                    {"selected_index", selected_index},
+                    {"selected_function", candidates.at(selected_index)},
+                    {"masked_source", masked_source}};
   const auto key = Sha256(p.dump() + analysis.fingerprint);
-  const auto state_path = Resolve(session, "defense-state.json", false);
+  // Catalog analysis and the teacher-configured challenge are two distinct,
+  // idempotent preparation phases for the same defense session.  Persist them
+  // separately so the selected-index request can follow the catalog request
+  // without being mistaken for a conflicting retry.
+  const std::string_view state_name =
+      p.contains("selected_index") ? "defense-challenge-state.json"
+                                   : "defense-state.json";
+  const auto state_path = Resolve(session, state_name, false);
   if (fs::exists(state_path)) {
     const auto saved = Parse(Read(state_path));
     if (saved.value("preparation_key", "") != key || saved.at("result") != result) {
@@ -218,9 +266,10 @@ Json Execute(const fs::path& workspace, const Json& r) {
     }
     return saved.at("result");
   }
-  SaveState(session, {{"protocol_version", "1.0"}, {"preparation_key", key},
-                     {"session_id", r["session_id"]}, {"seed", p["seed"]},
-                     {"project_sha256", analysis.fingerprint}, {"result", result}});
+  SaveState(session, state_name,
+            {{"protocol_version", "1.0"}, {"preparation_key", key},
+             {"session_id", r["session_id"]}, {"seed", p["seed"]},
+             {"project_sha256", analysis.fingerprint}, {"result", result}});
   return result;
 }
 }

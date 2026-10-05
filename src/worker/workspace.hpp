@@ -10,7 +10,8 @@ fs::path Resolve(const fs::path& root, std::string_view relative, bool existing 
 std::vector<fs::path> ValidateTree(const fs::path& root);
 std::string Read(const fs::path& path);
 void Write(const fs::path& path, std::string_view bytes);
-void SaveState(const fs::path& session, const Json& state);
+void SaveState(const fs::path& session, std::string_view name,
+               const Json& state);
 class SessionLock {
  public:
   explicit SessionLock(const fs::path& session);

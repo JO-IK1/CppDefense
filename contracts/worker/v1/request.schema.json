@@ -105,6 +105,7 @@
       "additionalProperties": false,
       "required": [
         "function_name",
+        "entity_type",
         "file_path",
         "signature_begin",
         "body_begin",
@@ -116,6 +117,9 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 1024
+        },
+        "entity_type": {
+          "enum": ["function", "class", "struct"]
         },
         "file_path": {
           "$ref": "#/$defs/relativePath"
@@ -187,7 +191,7 @@
             "payload": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["project_root", "top_n", "seed"],
+              "required": ["project_root", "seed"],
               "properties": {
                 "project_root": {
                   "$ref": "#/$defs/relativePath"
@@ -195,7 +199,9 @@
                 "top_n": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 50
+                  "maximum": 50,
+                  "deprecated": true,
+                  "description": "Accepted for runner compatibility; candidate selection is performed by the backend."
                 },
                 "seed": {
                   "$ref": "#/$defs/uint64"
@@ -203,7 +209,7 @@
                 "selected_index": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 49
+                  "maximum": 9999
                 },
                 "parser_options": {
                   "$ref": "#/$defs/parserOptions"

@@ -126,8 +126,28 @@ def main() -> int:
         assert repeated["result"] == prepared["result"]
         validate_response(repeated, response_schema)
 
+        configured = invoke(
+            worker,
+            workspace,
+            make_request(
+                "prepare_defense",
+                {
+                    "project_root": "project",
+                    "top_n": 1,
+                    "seed": "42",
+                    "selected_index": 0,
+                },
+            ),
+        )
+        assert configured["status"] == "ok"
+        assert "/* TODO */" in configured["result"]["masked_source"]
+        assert (
+            workspace / SESSION_ID / "defense-challenge-state.json"
+        ).is_file()
+        validate_response(configured, response_schema)
+
         (workspace / SESSION_ID / "attempts").mkdir()
-        selected = prepared["result"]["selected_function"]
+        selected = configured["result"]["selected_function"]
         materialized = invoke(
             worker,
             workspace,
@@ -138,6 +158,7 @@ def main() -> int:
                     "output_root": "attempts/one",
                     "selected_function": {
                         "function_name": selected["function_name"],
+                        "entity_type": selected["entity_type"],
                         "file_path": selected["file_path"],
                         "signature_begin": selected["signature_begin"],
                         "body_begin": selected["body_begin"],

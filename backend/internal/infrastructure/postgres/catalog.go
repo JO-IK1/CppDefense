@@ -28,8 +28,8 @@ type Lab struct {
 	Code             string    `json:"code"`
 	Name             string    `json:"name"`
 	Description      *string   `json:"description"`
-	TimeLimitSeconds int       `json:"time_limit_seconds"`
-	TopN             int       `json:"top_n"`
+	TimeLimitSeconds int       `json:"-"`
+	TopN             int       `json:"-"`
 	Status           string    `json:"status"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -173,7 +173,7 @@ func (r *CatalogRepository) ListLabs(ctx context.Context, actor, group string) (
 	}
 	return out, rows.Err()
 }
-func (r *CatalogRepository) CreateLab(ctx context.Context, actor, group, code, name, description string, seconds, topN int) (Lab, error) {
+func (r *CatalogRepository) CreateLab(ctx context.Context, actor, group, code, name, description string) (Lab, error) {
 	ok, e := r.canManage(ctx, actor, group)
 	if e != nil {
 		return Lab{}, e
@@ -186,7 +186,9 @@ func (r *CatalogRepository) CreateLab(ctx context.Context, actor, group, code, n
 		return Lab{}, e
 	}
 	var v Lab
-	e = r.db.pool.QueryRow(ctx, `insert into labs(id,group_id,code,name,description,time_limit_seconds,top_n)values($1,$2,$3,$4,$5,$6,$7)returning id,group_id,code::text,name,description,time_limit_seconds,top_n,status::text,created_at`, id, group, strings.ToLower(code), strings.TrimSpace(name), nullableString(description), seconds, topN).Scan(&v.ID, &v.GroupID, &v.Code, &v.Name, &v.Description, &v.TimeLimitSeconds, &v.TopN, &v.Status, &v.CreatedAt)
+	// Legacy defaults are retained only because old manifests and installations
+	// still contain these columns. New defenses never read them.
+	e = r.db.pool.QueryRow(ctx, `insert into labs(id,group_id,code,name,description,time_limit_seconds,top_n)values($1,$2,$3,$4,$5,900,5)returning id,group_id,code::text,name,description,time_limit_seconds,top_n,status::text,created_at`, id, group, strings.ToLower(code), strings.TrimSpace(name), nullableString(description)).Scan(&v.ID, &v.GroupID, &v.Code, &v.Name, &v.Description, &v.TimeLimitSeconds, &v.TopN, &v.Status, &v.CreatedAt)
 	if e != nil {
 		return Lab{}, fmt.Errorf("create lab: %w", e)
 	}
