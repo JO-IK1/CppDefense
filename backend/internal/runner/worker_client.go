@@ -19,6 +19,10 @@ type prepareResponse struct {
 	} `json:"result"`
 }
 
+// The worker protocol permits responses up to 16 MiB. Account for the newline
+// appended by the worker after the JSON document.
+const workerOutputLimit = (16 << 20) + 1
+
 func runWorker(ctx context.Context, binary, dir string, input, output any) error {
 	data, _ := json.Marshal(input)
 	command := exec.CommandContext(ctx, binary, "--workspace", dir)
@@ -38,7 +42,7 @@ func runWorker(ctx context.Context, binary, dir string, input, output any) error
 type limitedBuffer struct{ bytes.Buffer }
 
 func (b *limitedBuffer) Write(payload []byte) (int, error) {
-	remaining := (1 << 20) - b.Len()
+	remaining := workerOutputLimit - b.Len()
 	if remaining <= 0 {
 		return len(payload), nil
 	}

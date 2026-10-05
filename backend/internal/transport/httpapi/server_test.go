@@ -112,6 +112,27 @@ func TestInvalidRequestIDIsReplaced(t *testing.T) {
 	}
 }
 
+func TestDecodeJSONLimitAllowsLargeRunnerCompletion(t *testing.T) {
+	type payload struct {
+		Value string `json:"value"`
+	}
+	body := `{"value":"` + strings.Repeat("x", int(defaultJSONBodyLimit)) + `"}`
+
+	defaultRequest := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	if decodeJSON(httptest.NewRecorder(), defaultRequest, &payload{}) {
+		t.Fatal("default JSON limit accepted an oversized body")
+	}
+
+	runnerRequest := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	var decoded payload
+	if !decodeJSONLimit(httptest.NewRecorder(), runnerRequest, &decoded, 16<<20) {
+		t.Fatal("runner completion limit rejected a valid large body")
+	}
+	if decoded.Value != strings.Repeat("x", int(defaultJSONBodyLimit)) {
+		t.Fatal("decoded value does not match input")
+	}
+}
+
 func TestGitHubLoginStartUsesPKCEAuthorizationRedirect(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/github/start?return_to=/labs", nil)
 	response := httptest.NewRecorder()

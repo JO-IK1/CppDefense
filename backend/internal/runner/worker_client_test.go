@@ -7,9 +7,9 @@ import (
 
 func TestLimitedBufferCapsOutput(t *testing.T) {
 	var buffer limitedBuffer
-	payload := bytes.Repeat([]byte("x"), (1<<20)+100)
+	payload := bytes.Repeat([]byte("x"), workerOutputLimit+100)
 	written, err := buffer.Write(payload)
-	if err != nil || written != len(payload) || buffer.Len() != 1<<20 {
+	if err != nil || written != len(payload) || buffer.Len() != workerOutputLimit {
 		t.Fatalf("written=%d len=%d err=%v", written, buffer.Len(), err)
 	}
 }
