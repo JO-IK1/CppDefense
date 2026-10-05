@@ -6,10 +6,15 @@ cd "$script_dir"
 
 test -s production.env
 runner_candidate="$script_dir/.cppdefense-runner.new"
+worker_candidate="$script_dir/.cpp-defense-worker.new"
 cleanup() {
-  rm -f "$runner_candidate"
+  rm -f "$runner_candidate" "$worker_candidate"
 }
 trap cleanup EXIT HUP INT TERM
+
+test -f "$worker_candidate"
+test ! -L "$worker_candidate"
+test -x "$worker_candidate"
 
 /usr/local/bin/go \
   -C "$script_dir/../backend" \

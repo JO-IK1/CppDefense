@@ -24,6 +24,22 @@ jobs:
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Build C++ worker
+        run: |
+          cmake \
+            -S . \
+            -B build-deploy-worker \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCPP_DEFENSE_BUILD_WORKER=ON
+          cmake \
+            --build build-deploy-worker \
+            --target cpp-defense-worker \
+            --parallel 2
+          test -x build-deploy-worker/cpp-defense-worker
+
       - name: Configure SSH
         env:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
@@ -33,6 +49,14 @@ jobs:
           printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 0600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Upload C++ worker candidate
+        run: |
+          scp \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            build-deploy-worker/cpp-defense-worker \
+            "$VPS_USER@$VPS_HOST:/opt/cppdefense/source/deploy/.cpp-defense-worker.new"
 
       - name: Update application on VPS
         run: |
