@@ -29,9 +29,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Install GCC 12
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-12 g++-12
+
       - name: Build C++ worker
         run: |
-          cmake \
+          CC=gcc-12 CXX=g++-12 cmake \
             -S . \
             -B build-deploy-worker \
             -DCMAKE_BUILD_TYPE=Release \
