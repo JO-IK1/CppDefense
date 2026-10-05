@@ -12,6 +12,7 @@ namespace cpp_defense {
 using SourceFilePaths = std::vector<std::filesystem::path>;
 
 struct ProjectScannerOptions {
+  bool include_test_sources = false;
   std::vector<std::string> source_extensions{
       ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"};
   std::vector<std::string> excluded_directory_names{

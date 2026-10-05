@@ -98,6 +98,8 @@
       "additionalProperties": false,
       "required": [
         "function_name",
+        "entity_type",
+        "is_test_file",
         "file_path",
         "signature",
         "signature_begin",
@@ -106,13 +108,20 @@
         "begin_line",
         "end_line",
         "line_count",
-        "source_sha256"
+        "source_sha256",
+        "original_body_sha256"
       ],
       "properties": {
         "function_name": {
           "type": "string",
           "minLength": 1,
           "maxLength": 1024
+        },
+        "entity_type": {
+          "enum": ["function", "class", "struct"]
+        },
+        "is_test_file": {
+          "type": "boolean"
         },
         "file_path": {
           "$ref": "#/$defs/relativePath"
@@ -244,7 +253,7 @@
                 "candidates": {
                   "type": "array",
                   "minItems": 1,
-                  "maxItems": 50,
+                  "maxItems": 10000,
                   "items": {
                     "$ref": "#/$defs/functionCandidate"
                   }
@@ -252,15 +261,15 @@
                 "selected_index": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 49
+                  "maximum": 9999
                 },
                 "selected_function": {
                   "$ref": "#/$defs/functionCandidate"
                 },
                 "masked_source": {
                   "type": "string",
-                  "minLength": 1,
-                  "maxLength": 4194304
+                  "maxLength": 4194304,
+                  "description": "Empty during catalog analysis; populated after a teacher selects the restoration target."
                 },
                 "warnings": {
                   "type": "array",

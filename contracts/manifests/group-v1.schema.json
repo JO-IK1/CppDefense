@@ -15,6 +15,24 @@
     "group_code": {
       "$ref": "#/$defs/code"
     },
+    "time_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "deprecated": true,
+      "description": "Accepted for compatibility and ignored for new defenses."
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "deprecated": true,
+      "description": "Legacy alias accepted for compatibility and ignored for new defenses."
+    },
+    "top_n": {
+      "type": "integer",
+      "minimum": 1,
+      "deprecated": true,
+      "description": "Accepted for compatibility and ignored for new defenses."
+    },
     "items": {
       "type": "array",
       "minItems": 1,
@@ -81,6 +99,24 @@
         },
         "project_path": {
           "$ref": "#/$defs/projectPath"
+        },
+        "time_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "deprecated": true,
+          "description": "Accepted for compatibility and ignored for new defenses."
+        },
+        "time_limit_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "deprecated": true,
+          "description": "Legacy alias accepted for compatibility and ignored for new defenses."
+        },
+        "top_n": {
+          "type": "integer",
+          "minimum": 1,
+          "deprecated": true,
+          "description": "Accepted for compatibility and ignored for new defenses."
         }
       }
     }

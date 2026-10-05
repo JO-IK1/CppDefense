@@ -37,3 +37,9 @@ test("wheel renderer accepts a missing candidate list while preparation is pendi
   vm.runInContext(`${source}\nrenderWheelCandidates(null);`, context);
   assert.equal(wheel.dataset.candidates, "");
 });
+
+test("selected wheel sector is rotated to the fixed pointer at the top", () => {
+  const context = browserContext(null);
+  const rotation = vm.runInContext(`${source}\nselectedWheelRotation(3, 8);`, context);
+  assert.equal(rotation, -135);
+});

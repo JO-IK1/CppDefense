@@ -8,6 +8,8 @@
     "candidates": [
       {
         "function_name": "calculateStatistics",
+        "entity_type": "function",
+        "is_test_file": false,
         "file_path": "src/statistics.cpp",
         "signature": "Statistics calculateStatistics(const Data& data)",
         "signature_begin": 128,
@@ -23,6 +25,8 @@
     "selected_index": 0,
     "selected_function": {
       "function_name": "calculateStatistics",
+      "entity_type": "function",
+      "is_test_file": false,
       "file_path": "src/statistics.cpp",
       "signature": "Statistics calculateStatistics(const Data& data)",
       "signature_begin": 128,

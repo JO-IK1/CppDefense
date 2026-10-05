@@ -34,16 +34,24 @@ type Manifest struct {
 	LabCode       string  `json:"lab_code,omitempty"`
 	Student       Student `json:"student,omitempty"`
 	ProjectPath   string  `json:"project_path,omitempty"`
-	Items         []Item  `json:"items,omitempty"`
+	// Deprecated compatibility fields. Defense settings are chosen by the
+	// teacher and these values are deliberately ignored.
+	TimeLimitSeconds           *int   `json:"time_limit,omitempty"`
+	DeprecatedTimeLimitSeconds *int   `json:"time_limit_seconds,omitempty"`
+	TopN                       *int   `json:"top_n,omitempty"`
+	Items                      []Item `json:"items,omitempty"`
 }
 
 type Student struct {
 	GitHubLogin string `json:"github_login"`
 }
 type Item struct {
-	LabCode     string  `json:"lab_code"`
-	Student     Student `json:"student"`
-	ProjectPath string  `json:"project_path"`
+	LabCode                    string  `json:"lab_code"`
+	Student                    Student `json:"student"`
+	ProjectPath                string  `json:"project_path"`
+	TimeLimitSeconds           *int    `json:"time_limit,omitempty"`
+	DeprecatedTimeLimitSeconds *int    `json:"time_limit_seconds,omitempty"`
+	TopN                       *int    `json:"top_n,omitempty"`
 }
 
 type Project struct {

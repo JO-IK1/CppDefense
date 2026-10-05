@@ -158,7 +158,7 @@ func (repository *AuthRepository) ApproveStudent(ctx context.Context, actorID, u
 		return appauth.User{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	var actorRole, targetStatus, recordStatus, groupID string
+	var actorRole, targetStatus, targetRole, recordStatus, groupID string
 	if err := tx.QueryRow(ctx, `select role::text from users where id=$1 and status='active' for update`, actorID).Scan(&actorRole); err != nil {
 		return appauth.User{}, appauth.ErrForbidden
 	}
@@ -172,10 +172,11 @@ func (repository *AuthRepository) ApproveStudent(ctx context.Context, actorID, u
 	if replay {
 		return queryUser(ctx, tx, replayUserID)
 	}
-	if err := tx.QueryRow(ctx, `select status::text from users where id=$1 for update`, userID).Scan(&targetStatus); err != nil || targetStatus != "pending" {
+	if err := tx.QueryRow(ctx, `select status::text,coalesce(role::text,'') from users where id=$1 for update`, userID).Scan(&targetStatus, &targetRole); err != nil || (targetStatus != "pending" && !(targetStatus == "active" && targetRole == "student")) {
 		return appauth.User{}, appauth.ErrConflict
 	}
-	if err := tx.QueryRow(ctx, `select status::text,group_id from student_records where id=$1 for update`, studentRecordID).Scan(&recordStatus, &groupID); err != nil || recordStatus != "unclaimed" {
+	var loginMatches, alreadyLinked bool
+	if err := tx.QueryRow(ctx, `select sr.status::text,sr.group_id,sr.github_login_expected=gi.login,exists(select 1 from student_records linked where linked.user_id=$2 and linked.status='claimed') from student_records sr join github_identities gi on gi.user_id=$2 where sr.id=$1 for update of sr,gi`, studentRecordID, userID).Scan(&recordStatus, &groupID, &loginMatches, &alreadyLinked); err != nil || recordStatus != "unclaimed" || !loginMatches || alreadyLinked {
 		return appauth.User{}, appauth.ErrConflict
 	}
 	if actorRole == "teacher" {

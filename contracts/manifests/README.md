@@ -4,6 +4,9 @@
 
 Canonical filename inside every import archive: `cppdefense-manifest.json`.
 
+Legacy `time_limit`, `time_limit_seconds`, and `top_n` fields are accepted but
+ignored. A teacher configures these values for each new defense.
+
 - `group-v1.schema.json` validates one group archive with multiple student/lab projects.
 - `lab-v1.schema.json` validates exactly one project of one student and one lab.
 

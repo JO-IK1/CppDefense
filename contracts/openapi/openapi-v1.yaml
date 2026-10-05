@@ -528,13 +528,16 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [selection_mode, candidate_id, time_limit_seconds]
+              required: [selection_mode, candidate_id, entity_mode, time_limit_seconds, wheel_size]
               properties:
                 selection_mode: { enum: [automatic, manual] }
                 candidate_id:
                   type: string
                   description: Empty for automatic mode; candidate UUID for manual mode
-                time_limit_seconds: { type: integer, minimum: 60, maximum: 86400 }
+                entity_mode:
+                  enum: [functions_only, functions_classes_structs]
+                time_limit_seconds: { type: integer, minimum: 60, maximum: 1800 }
+                wheel_size: { type: integer, minimum: 2, maximum: 12 }
       responses:
         '202':
           description: Teacher settings accepted and final preparation queued
@@ -1350,20 +1353,10 @@ components:
         description:
           type: string
           maxLength: 20000
-        time_limit_seconds:
-          type: integer
-          minimum: 60
-          maximum: 86400
-          default: 600
-        top_n:
-          type: integer
-          minimum: 1
-          maximum: 50
-          default: 5
     Lab:
       type: object
       additionalProperties: false
-      required: [id, group_id, code, name, status, time_limit_seconds, top_n]
+      required: [id, group_id, code, name, status]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -1377,13 +1370,6 @@ components:
           type: string
         status:
           enum: [active, archived]
-        time_limit_seconds:
-          type: integer
-          minimum: 60
-        top_n:
-          type: integer
-          minimum: 1
-          maximum: 50
     GroupSubmission:
       type: object
       additionalProperties: false
@@ -1481,7 +1467,7 @@ components:
     Defense:
       type: object
       additionalProperties: false
-      required: [id, session_id, submission_version_id, student_login, lab_code, lab_name, status, seed, time_limit_seconds, current_draft, draft_version, created_at]
+      required: [id, session_id, submission_version_id, student_login, lab_code, lab_name, status, preparation_stage, seed, time_limit_seconds, wheel_size, entity_mode, selection_mode, current_draft, draft_version, wheel_candidates, created_at]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -1494,12 +1480,24 @@ components:
         lab_name: { type: string }
         status:
           $ref: '#/components/schemas/DefenseState'
+        preparation_stage:
+          enum: [analyzing_project, waiting_for_teacher, materializing_challenge, ready, passed, failed, expired, cancelled, error]
         seed:
           type: string
           pattern: '^(0|[1-9][0-9]{0,19})$'
         time_limit_seconds:
           type: integer
           minimum: 1
+        wheel_size:
+          type: [integer, 'null']
+          minimum: 2
+          maximum: 12
+        entity_mode:
+          type: [string, 'null']
+          enum: [functions_only, functions_classes_structs, null]
+        selection_mode:
+          type: [string, 'null']
+          enum: [automatic, manual, null]
         deadline_at:
           type: [string, 'null']
           format: date-time
@@ -1523,16 +1521,22 @@ components:
         wheel_candidates:
           type: array
           items: { $ref: '#/components/schemas/WheelCandidate' }
+        candidate_catalog:
+          type: array
+          description: Complete analyzed catalog returned only to teachers and administrators while configuration is pending
+          items: { $ref: '#/components/schemas/WheelCandidate' }
         created_at:
           type: string
           format: date-time
     SelectedFunction:
       type: object
       additionalProperties: false
-      required: [function_name, file_path, signature, begin_line, end_line, masked_source]
+      required: [function_name, entity_type, file_path, signature, begin_line, end_line, masked_source]
       properties:
         function_name:
           type: string
+        entity_type:
+          enum: [function, class, struct]
         file_path:
           type: string
         signature:
@@ -1547,18 +1551,22 @@ components:
           type: string
           minLength: 1
           maxLength: 4194304
-          description: Complete selected source file with only the chosen function body removed
+          description: Complete selected source file with only the chosen entity body removed
     WheelCandidate:
       type: object
       additionalProperties: false
-      required: [id, rank, function_name, signature, file_path, line_count]
+      required: [id, rank, function_name, entity_type, is_test_file, signature, file_path, line_count, begin_line, end_line]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         rank: { type: integer, minimum: 1 }
         function_name: { type: string }
+        entity_type: { enum: [function, class, struct] }
+        is_test_file: { type: boolean }
         signature: { type: string }
         file_path: { type: string }
         line_count: { type: integer, minimum: 1 }
+        begin_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
     AttemptOutcome:
       enum: [pending, passed, failed, error]
     StageResult:
@@ -1625,12 +1633,14 @@ components:
           type: string
         top_n:
           type: integer
-          minimum: 1
-          maximum: 50
+          minimum: 2
+          maximum: 12
+          deprecated: true
+          description: Runner compatibility field carrying the configured wheel size
         selected_index:
           type: [integer, 'null']
           minimum: 0
-          maximum: 49
+          maximum: 9999
         answer:
           type: [string, 'null']
         selected_function:
@@ -1651,8 +1661,10 @@ components:
           $ref: '#/components/schemas/Uuid'
         top_n:
           type: integer
-          minimum: 1
-          maximum: 50
+          minimum: 2
+          maximum: 12
+          deprecated: true
+          description: Runner compatibility field carrying the configured wheel size
         seed:
           type: string
           pattern: '^(0|[1-9][0-9]{0,19})$'
@@ -1680,10 +1692,12 @@ components:
     WorkerSelectedFunction:
       type: object
       additionalProperties: false
-      required: [function_name, file_path, signature_begin, body_begin, body_end, source_sha256]
+      required: [function_name, entity_type, file_path, signature_begin, body_begin, body_end, source_sha256]
       properties:
         function_name:
           type: string
+        entity_type:
+          enum: [function, class, struct]
         file_path:
           type: string
         signature_begin:
@@ -1712,17 +1726,19 @@ components:
           minimum: 0
         masked_source:
           type: string
-          minLength: 1
           maxLength: 4194304
+          description: Empty after catalog analysis; populated after final challenge materialization
         configure_result: {}
         build_result: {}
         ctest_result: {}
     PreparedCandidate:
       type: object
       additionalProperties: false
-      required: [function_name, file_path, signature, signature_begin, body_begin, body_end, begin_line, end_line, line_count, source_sha256, original_body_sha256]
+      required: [function_name, entity_type, is_test_file, file_path, signature, signature_begin, body_begin, body_end, begin_line, end_line, line_count, source_sha256, original_body_sha256]
       properties:
         function_name: { type: string }
+        entity_type: { enum: [function, class, struct] }
+        is_test_file: { type: boolean }
         file_path: { type: string }
         signature: { type: string }
         signature_begin: { type: integer, minimum: 0 }

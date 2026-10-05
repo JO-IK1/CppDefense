@@ -118,17 +118,15 @@ func (h *catalogHTTP) createLab(w http.ResponseWriter, r *http.Request) {
 	}
 	g := r.PathValue("group_id")
 	var in struct {
-		Code             string `json:"code"`
-		Name             string `json:"name"`
-		Description      string `json:"description"`
-		TimeLimitSeconds int    `json:"time_limit_seconds"`
-		TopN             int    `json:"top_n"`
+		Code        string `json:"code"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
 	}
-	if !decodeJSON(w, r, &in) || !validIdempotencyKey(r) || !uuidPattern.MatchString(g) || !codeOK(in.Code) || strings.TrimSpace(in.Name) == "" || in.TimeLimitSeconds < 1 || in.TopN < 1 || in.TopN > 50 {
+	if !decodeJSON(w, r, &in) || !validIdempotencyKey(r) || !uuidPattern.MatchString(g) || !codeOK(in.Code) || strings.TrimSpace(in.Name) == "" {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Request is invalid")
 		return
 	}
-	v, e := h.repository.CreateLab(r.Context(), a.ID, g, in.Code, in.Name, in.Description, in.TimeLimitSeconds, in.TopN)
+	v, e := h.repository.CreateLab(r.Context(), a.ID, g, in.Code, in.Name, in.Description)
 	if e != nil {
 		h.fail(w, r, e)
 		return

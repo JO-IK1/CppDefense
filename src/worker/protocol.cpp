@@ -99,11 +99,13 @@ void ValidateRequest(const Json& r) {
   if (r["command"] == "analyze_project") {
     Fields(p, {"project_root"}, {"parser_options"});
   } else if (r["command"] == "prepare_defense") {
-    Fields(p, {"project_root", "top_n", "seed"}, {"parser_options", "selected_index"});
-    Require(Number(p["top_n"], 1, 50), "INVALID_REQUEST", "top_n must be 1..50");
+    Fields(p, {"project_root", "seed"}, {"top_n", "parser_options", "selected_index"});
+    if (p.contains("top_n")) {
+      Require(Number(p["top_n"], 1, 50), "INVALID_REQUEST", "top_n must be 1..50");
+    }
     if (p.contains("selected_index")) {
-      Require(Number(p["selected_index"], 0, 49), "INVALID_REQUEST",
-              "selected_index must be 0..49");
+      Require(Number(p["selected_index"], 0, 9999), "INVALID_REQUEST",
+              "selected_index must be 0..9999");
     }
     (void)Seed(p["seed"]);
   } else {
@@ -111,9 +113,12 @@ void ValidateRequest(const Json& r) {
     Path(p["output_root"]);
     Require(Text(p["answer"], 0, 1048576), "INVALID_REQUEST", "Answer exceeds 1 MiB");
     const auto& f = p["selected_function"];
-    Fields(f, {"function_name", "file_path", "signature_begin", "body_begin",
-               "body_end", "source_sha256"});
-    Require(Text(f["function_name"], 1, 1024), "INVALID_REQUEST", "Invalid function name");
+    Fields(f, {"function_name", "entity_type", "file_path", "signature_begin",
+               "body_begin", "body_end", "source_sha256"});
+    Require(Text(f["function_name"], 1, 1024), "INVALID_REQUEST", "Invalid entity name");
+    Require(f["entity_type"] == "function" || f["entity_type"] == "class" ||
+                f["entity_type"] == "struct",
+            "INVALID_REQUEST", "Invalid entity type");
     Path(f["file_path"]);
     for (const auto* key : {"signature_begin", "body_begin", "body_end"}) {
       Require(Number(f[key], 0, 16*1024*1024), "INVALID_REQUEST", "Invalid byte offset");

@@ -193,6 +193,29 @@ bool TestSkipsTestSourceFileNames() {
                      "test source filenames are not defense candidates");
 }
 
+bool TestCanIncludeTestSourcesForManualSelection() {
+  TemporaryDirectory temporary_directory;
+  const fs::path root = temporary_directory.path() / "project";
+  const SourceFilePaths expected_paths{
+      root / "src/calculator.cpp",
+      root / "calculator_test.cpp",
+      root / "tests/calculator.cpp",
+  };
+  for (const auto& path : expected_paths) WriteFile(path);
+
+  ProjectScannerOptions options;
+  options.include_test_sources = true;
+  std::erase(options.excluded_directory_names, "test");
+  std::erase(options.excluded_directory_names, "tests");
+  const ProjectScanner scanner(options);
+  const auto result = scanner.FindSourceFiles(root);
+  if (!Expect(result.has_value(), "test sources can be included explicitly")) {
+    return false;
+  }
+  return ExpectPaths(*result, expected_paths,
+                     "manual-selection scan includes test filenames and directories");
+}
+
 bool TestSupportsCustomExcludedDirectories() {
   TemporaryDirectory temporary_directory;
   const fs::path root = temporary_directory.path() / "project";
@@ -400,11 +423,12 @@ struct TestCase {
   bool (*run)();
 };
 
-constexpr std::array<TestCase, 12> kTestCases = {{
+constexpr std::array<TestCase, 13> kTestCases = {{
     {"find-supported-files", TestFindsSupportedFiles},
     {"skip-excluded-directories", TestSkipsExcludedDirectories},
     {"skip-excluded-directories-case-insensitive", TestSkipsExcludedDirectoriesCaseInsensitive},
     {"skip-test-source-files", TestSkipsTestSourceFileNames},
+    {"include-test-source-files", TestCanIncludeTestSourcesForManualSelection},
     {"custom-excluded-directories", TestSupportsCustomExcludedDirectories},
     {"absolute-paths", TestReturnsAbsoluteNormalizedPaths},
     {"skip-symbolic-links", TestSkipsSymbolicLinks},

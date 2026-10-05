@@ -116,8 +116,9 @@ void TemporaryTree::Commit(const fs::path& destination) {
   fs::rename(path_, destination);
   committed_ = true;
 }
-void SaveState(const fs::path& session, const Json& state) {
-  const auto destination = Resolve(session, "defense-state.json", false);
+void SaveState(const fs::path& session, std::string_view name,
+               const Json& state) {
+  const auto destination = Resolve(session, name, false);
   Require(!fs::exists(destination), "SESSION_CONFLICT", "Preparation state already exists");
   TemporaryTree temporary(Resolve(session, ".state-" + NewSessionId(), false));
   Write(temporary.path() / "state.json", state.dump());
