@@ -15,7 +15,9 @@ concurrency:
 jobs:
   deploy:
     name: Deploy production
-    runs-on: ubuntu-24.04
+    # The production VPS runs Ubuntu 22.04. Build the native worker on the
+    # same glibc/libstdc++ baseline so the uploaded binary remains compatible.
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     environment:
       name: production
