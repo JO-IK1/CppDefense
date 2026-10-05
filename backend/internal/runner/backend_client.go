@@ -69,6 +69,10 @@ func (a *agent) complete(ctx context.Context, lease postgres.Lease, value postgr
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		if trimmed := bytes.TrimSpace(detail); len(trimmed) != 0 {
+			return fmt.Errorf("complete status %d: %s", response.StatusCode, trimmed)
+		}
 		return fmt.Errorf("complete status %d", response.StatusCode)
 	}
 	return nil

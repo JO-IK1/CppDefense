@@ -381,7 +381,11 @@ func (h *defenseHTTP) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in postgres.Completion
-	if !decodeJSON(w, r, &in) {
+	// Preparation results contain the complete restoration-candidate catalog.
+	// Large, template-heavy projects can legitimately exceed the default 64 KiB
+	// JSON request limit. The worker protocol caps its response at 16 MiB, so use
+	// the same bound for this runner-authenticated endpoint only.
+	if !decodeJSONLimit(w, r, &in, 16<<20) {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Completion is invalid")
 		return
 	}

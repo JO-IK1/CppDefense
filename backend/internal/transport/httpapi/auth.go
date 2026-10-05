@@ -220,8 +220,14 @@ func (handler *authHTTP) writeAuthorizationError(response http.ResponseWriter, r
 	}
 }
 
+const defaultJSONBodyLimit int64 = 64 << 10
+
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 64<<10))
+	return decodeJSONLimit(response, request, target, defaultJSONBodyLimit)
+}
+
+func decodeJSONLimit(response http.ResponseWriter, request *http.Request, target any, limit int64) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, limit))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(target) == nil
 }
