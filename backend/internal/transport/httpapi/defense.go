@@ -130,7 +130,7 @@ func (h *defenseHTTP) repositoryFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(archive.File))
 	for _, file := range archive.File {
-		if file.FileInfo().IsDir() || !safeRepositoryPath(file.Name) {
+		if file.FileInfo().IsDir() || !visibleRepositoryPath(file.Name) {
 			continue
 		}
 		items = append(items, map[string]any{"path": file.Name, "size": file.UncompressedSize64})
@@ -212,6 +212,24 @@ func (h *defenseHTTP) openDefenseArchive(r *http.Request, actor string) (*zip.Re
 
 func safeRepositoryPath(value string) bool {
 	return value != "" && value == path.Clean(value) && !strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "../") && !strings.Contains(value, "\\")
+}
+
+func visibleRepositoryPath(value string) bool {
+	if !safeRepositoryPath(value) {
+		return false
+	}
+	hiddenDirectories := map[string]struct{}{
+		".git": {}, ".github": {}, ".idea": {}, ".vscode": {}, "_deps": {},
+		"build": {}, "cache": {}, "cmake-build-debug": {}, "cmake-build-release": {},
+		"third_party": {}, "vendor": {},
+	}
+	parts := strings.Split(value, "/")
+	for _, part := range parts[:len(parts)-1] {
+		if _, hidden := hiddenDirectories[strings.ToLower(part)]; hidden {
+			return false
+		}
+	}
+	return true
 }
 
 func maskRepositoryBody(source []byte, begin, end int64) ([]byte, error) {

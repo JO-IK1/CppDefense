@@ -32,3 +32,27 @@ func TestSafeRepositoryPath(t *testing.T) {
 		t.Fatal("safe repository path rejected")
 	}
 }
+
+func TestVisibleRepositoryPathHidesGeneratedAndVendoredTrees(t *testing.T) {
+	for _, value := range []string{
+		"build/vendor/googletest/gtest.cc",
+		"third_party/googletest/gtest.cc",
+		"vendor/library/source.cpp",
+		".github/workflows/ci.yml",
+		"src/_deps/library/header.hpp",
+	} {
+		if visibleRepositoryPath(value) {
+			t.Fatalf("infrastructure path is visible: %q", value)
+		}
+	}
+	for _, value := range []string{
+		"CMakeLists.txt",
+		"src/main.cpp",
+		"tests/word_count_test.cpp",
+		"README.md",
+	} {
+		if !visibleRepositoryPath(value) {
+			t.Fatalf("project path is hidden: %q", value)
+		}
+	}
+}

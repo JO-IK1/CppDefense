@@ -102,17 +102,21 @@ bool TestFindsSupportedFiles() {
 bool TestSkipsExcludedDirectories() {
   TemporaryDirectory temporary_directory;
   const fs::path root = temporary_directory.path() / "project";
-  constexpr std::array<std::string_view, 9> kExcludedDirectoryNames{
+  constexpr std::array<std::string_view, 13> kExcludedDirectoryNames{
     ".git",
+    ".github",
     ".idea",
     ".vscode",
+    "_deps",
     "build",
     "cache",
     "cmake-build-debug",
     "cmake-build-release",
     "test",
     "tests",
-};
+    "third_party",
+    "vendor",
+  };
 
   for (const std::string_view directory_name : kExcludedDirectoryNames) {
     WriteFile(root / directory_name / "ignored.cpp");
@@ -136,17 +140,21 @@ bool TestSkipsExcludedDirectories() {
 bool TestSkipsExcludedDirectoriesCaseInsensitive() {
   TemporaryDirectory temporary_directory;
   const fs::path root = temporary_directory.path() / "project";
-  constexpr std::array<std::string_view, 9> kExcludedDirectoryNames{
+  constexpr std::array<std::string_view, 13> kExcludedDirectoryNames{
     ".GIT",
+    ".GitHub",
     ".Idea",
     ".VsCoDe",
+    "_DePs",
     "BUILD",
     "Cache",
     "CMAKE-BUILD-DEBUG",
     "Cmake-Build-Release",
     "TEST",
     "Tests",
-};
+    "Third_Party",
+    "VENDOR",
+  };
 
   for (const std::string_view directory_name : kExcludedDirectoryNames) {
     WriteFile(root / directory_name / "ignored.cpp");
