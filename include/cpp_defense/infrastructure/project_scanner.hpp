@@ -17,14 +17,18 @@ struct ProjectScannerOptions {
       ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"};
   std::vector<std::string> excluded_directory_names{
       ".git",
+      ".github",
       ".idea",
       ".vscode",
+      "_deps",
       "build",
       "cache",
       "cmake-build-debug",
       "cmake-build-release",
       "test",
       "tests",
+      "third_party",
+      "vendor",
   };
 };
 
