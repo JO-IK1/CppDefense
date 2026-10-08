@@ -19,6 +19,9 @@ document.querySelector("#theme-toggle")?.addEventListener("click", () => {
   applyTheme(next);
 });
 
+const entrySplash = document.querySelector("#entry-splash");
+entrySplash?.addEventListener("animationend", () => entrySplash.remove(), { once: true });
+
 window.addEventListener("unhandledrejection", event => {
   event.preventDefault();
   alert(event.reason?.message || "Операция не выполнена");
@@ -146,6 +149,45 @@ let wheelSpinAnimation;
 let wheelSettleAnimation;
 
 const answerIndent = "    ";
+const cppTokenPattern = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|^\s*#\s*[A-Za-z_]\w*|\b(?:alignas|alignof|auto|bool|break|case|catch|char|class|concept|const|consteval|constexpr|constinit|const_cast|continue|co_await|co_return|co_yield|decltype|default|delete|do|double|dynamic_cast|else|enum|explicit|export|extern|false|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|noexcept|nullptr|operator|override|private|protected|public|register|reinterpret_cast|requires|return|short|signed|sizeof|static|static_assert|static_cast|struct|switch|template|this|thread_local|throw|true|try|typedef|typeid|typename|union|unsigned|using|virtual|void|volatile|wchar_t|while)\b|\b(?:0[xX][\dA-Fa-f]+|0[bB][01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)[uUlLfF]*\b/gm;
+
+function escapeSyntaxText(value) {
+  return value.replace(/[&<>]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]);
+}
+
+function escapeRegularExpression(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightSyntaxText(value, selectedIdentifier) {
+  if (!selectedIdentifier) return escapeSyntaxText(value);
+  const pattern = new RegExp(`\\b${escapeRegularExpression(selectedIdentifier)}\\b`, "g");
+  let result = "";
+  let offset = 0;
+  for (const match of value.matchAll(pattern)) {
+    result += escapeSyntaxText(value.slice(offset, match.index));
+    result += `<mark class="syntax-match">${escapeSyntaxText(match[0])}</mark>`;
+    offset = match.index + match[0].length;
+  }
+  return result + escapeSyntaxText(value.slice(offset));
+}
+
+function highlightCpp(source, selectedIdentifier = "") {
+  let result = "";
+  let offset = 0;
+  for (const match of source.matchAll(cppTokenPattern)) {
+    const token = match[0];
+    result += highlightSyntaxText(source.slice(offset, match.index), selectedIdentifier);
+    let kind = "keyword";
+    if (token.startsWith("//") || token.startsWith("/*")) kind = "comment";
+    else if (token.startsWith("\"") || token.startsWith("'")) kind = "string";
+    else if (token.trimStart().startsWith("#")) kind = "preprocessor";
+    else if (/^(?:0[xX]|0[bB]|\d)/.test(token)) kind = "number";
+    result += `<span class="syntax-${kind}">${escapeSyntaxText(token)}</span>`;
+    offset = match.index + token.length;
+  }
+  return result + highlightSyntaxText(source.slice(offset), selectedIdentifier);
+}
 
 function editAnswerIndent(value, selectionStart, selectionEnd, outdent = false) {
   const start = Math.max(0, Math.min(selectionStart, value.length));
@@ -182,9 +224,27 @@ function editAnswerIndent(value, selectionStart, selectionEnd, outdent = false) 
   };
 }
 
+function renderAnswerHighlight() {
+  const answer = document.querySelector("#answer");
+  const highlightCode = document.querySelector("#answer-highlight code");
+  if (!answer || !highlightCode) return;
+  const selected = answer.value.slice(answer.selectionStart, answer.selectionEnd);
+  const selectedIdentifier = /^[A-Za-z_]\w*$/.test(selected) ? selected : "";
+  highlightCode.innerHTML = highlightCpp(answer.value, selectedIdentifier) + (answer.value.endsWith("\n") ? " " : "\n");
+}
+
 function initializeAnswerEditor() {
   const answer = document.querySelector("#answer");
   if (!answer) return;
+  const highlight = document.querySelector("#answer-highlight");
+  const syncHighlightScroll = () => {
+    if (!highlight) return;
+    highlight.scrollTop = answer.scrollTop;
+    highlight.scrollLeft = answer.scrollLeft;
+  };
+  answer.addEventListener("input", renderAnswerHighlight);
+  answer.addEventListener("select", renderAnswerHighlight);
+  answer.addEventListener("scroll", syncHighlightScroll);
   answer.addEventListener("keydown", event => {
     if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
     event.preventDefault();
@@ -193,9 +253,12 @@ function initializeAnswerEditor() {
     const edited = editAnswerIndent(answer.value, answer.selectionStart, answer.selectionEnd, event.shiftKey);
     answer.value = edited.value;
     answer.setSelectionRange(edited.selectionStart, edited.selectionEnd);
+    renderAnswerHighlight();
     answer.scrollTop = scrollTop;
     answer.scrollLeft = scrollLeft;
+    syncHighlightScroll();
   });
+  renderAnswerHighlight();
 }
 
 initializeAnswerEditor();
@@ -316,6 +379,40 @@ function settleWheel(selectedID, challenge) {
 const defenseStatusLabels = { ready: "Ожидает настройки преподавателя", preparing: "Подготовка задания…", active: "Защита идёт", passed: "Защита успешно сдана", failed: "Защита не пройдена", error: "Ошибка подготовки защиты", expired: "Время защиты истекло", cancelled: "Защита отменена" };
 const preparationStageLabels = { analyzing_project: "Анализируем проект и ищем задания…", waiting_for_teacher: "Ожидаем настройки преподавателя", materializing_challenge: "Формируем выбранное задание…", ready: "Задание готово" };
 
+function initializeStudentLabTable() {
+  const root = document.querySelector("#student-labs");
+  if (!root) return;
+  const firstRows = new Map();
+  root.querySelectorAll("tr[data-lab-code]").forEach(row => {
+    const key = row.dataset.labCode;
+    const first = firstRows.get(key);
+    if (!first) {
+      firstRows.set(key, row);
+      return;
+    }
+    const option = row.querySelector(".lab-version-select option");
+    if (option) first.querySelector(".lab-version-select")?.append(option);
+    row.remove();
+  });
+  firstRows.forEach(row => {
+    const select = row.querySelector(".lab-version-select");
+    const download = row.querySelector("[data-download-submission]");
+    const start = row.querySelector("[data-start-defense]");
+    if (!select) return;
+    const options = [...select.options].sort((left, right) => Number(right.dataset.version) - Number(left.dataset.version));
+    select.replaceChildren(...options);
+    const syncVersion = () => {
+      const submissionID = select.value;
+      if (download) download.href = `/api/v1/submissions/${submissionID}/archive`;
+      if (start) start.dataset.startDefense = submissionID;
+    };
+    select.addEventListener("change", syncVersion);
+    syncVersion();
+  });
+}
+
+initializeStudentLabTable();
+
 document.querySelectorAll("[data-start-defense]").forEach(button => {
   button.onclick = async () => {
     document.querySelector("#defense").classList.remove("hidden");
@@ -339,7 +436,10 @@ async function refreshDefense() {
     const timer = document.querySelector("#timer");
     draftVersion = value.draft_version || draftVersion;
     renderWheelCandidates(value.wheel_candidates);
-    if (value.current_draft && !document.querySelector("#answer").value) document.querySelector("#answer").value = value.current_draft;
+    if (value.current_draft && !document.querySelector("#answer").value) {
+      document.querySelector("#answer").value = value.current_draft;
+      renderAnswerHighlight();
+    }
     status.textContent = preparationStageLabels[value.preparation_stage] || defenseStatusLabels[value.status] || value.status;
     if (value.challenge && value.status === "active") {
       settleWheel(value.selected_candidate_id, value.challenge);
@@ -706,13 +806,55 @@ document.querySelector("#submissions-form")?.addEventListener("submit", async ev
   const form = new FormData(event.target);
   const value = await api(`/api/v1/groups/${form.get("group_id")}/submissions`);
   const root = document.querySelector("#submissions-result");
-  root.replaceChildren(...value.items.map(item => {
-    const row = node("p");
-    const link = node("a", "", `${item.github_login} · ${item.lab_code} · версия ${item.version_number}`);
-    link.href = `/api/v1/submissions/${item.id}/archive`;
-    row.append(link);
-    return row;
-  }));
+  if (!value.items.length) {
+    root.replaceChildren(node("div", "empty-state", "В этой группе пока нет загруженных работ"));
+    return;
+  }
+  const groups = new Map();
+  value.items.forEach(item => {
+    const key = `${item.github_login}:${item.lab_code}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  const table = node("table", "lab-table lab-table--teacher");
+  const head = document.createElement("thead");
+  const heading = document.createElement("tr");
+  ["Студент и лабораторная", "Версия", "Действия"].forEach(label => heading.append(node("th", "", label)));
+  head.append(heading);
+  const body = document.createElement("tbody");
+  groups.forEach(items => {
+    items.sort((left, right) => Number(right.version_number) - Number(left.version_number));
+    const current = items[0];
+    const row = document.createElement("tr");
+    const titleCell = document.createElement("td");
+    const title = node("div", "lab-title-cell");
+    title.append(node("strong", "", current.lab_name || current.lab_code), node("span", "lab-table__meta", `@${current.github_login} · ${current.lab_code}`));
+    titleCell.append(title);
+    const versionCell = document.createElement("td");
+    const select = node("select", "lab-version-select");
+    select.setAttribute("aria-label", `Версия ${current.lab_name || current.lab_code} студента ${current.github_login}`);
+    items.forEach(item => {
+      const option = node("option", "", `Версия ${item.version_number}`);
+      option.value = item.id;
+      select.append(option);
+    });
+    versionCell.append(select);
+    const actionsCell = document.createElement("td");
+    const actions = node("div", "lab-row-actions");
+    const download = node("a", "secondary-button", "Скачать ZIP");
+    download.href = `/api/v1/submissions/${select.value}/archive`;
+    select.addEventListener("change", () => {
+      download.href = `/api/v1/submissions/${select.value}/archive`;
+    });
+    actions.append(download);
+    actionsCell.append(actions);
+    row.append(titleCell, versionCell, actionsCell);
+    body.append(row);
+  });
+  table.append(head, body);
+  const wrapper = node("div", "lab-table-wrap");
+  wrapper.append(table);
+  root.replaceChildren(wrapper);
 });
 
 async function loadPendingLinks() {

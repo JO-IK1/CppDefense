@@ -81,3 +81,20 @@ test("Tab and Shift+Tab indent and outdent selected lines", () => {
   const outdented = vm.runInContext(`editAnswerIndent("    one\\n    two", 0, 15, true);`, context);
   assert.equal(outdented.value, "one\ntwo");
 });
+
+test("C++ highlighter marks basic tokens and escapes source HTML", () => {
+  const context = browserContext(null);
+  const highlighted = vm.runInContext(`${source}\nhighlightCpp("const int value = 42; // <unsafe>");`, context);
+  assert.match(highlighted, /syntax-keyword[^>]*>const<\/span>/);
+  assert.match(highlighted, /syntax-keyword[^>]*>int<\/span>/);
+  assert.match(highlighted, /syntax-number[^>]*>42<\/span>/);
+  assert.match(highlighted, /syntax-comment[^>]*>\/\/ &lt;unsafe&gt;<\/span>/);
+  assert.doesNotMatch(highlighted, /<unsafe>/);
+});
+
+test("C++ highlighter marks repeated occurrences of the selected identifier", () => {
+  const context = browserContext(null);
+  const highlighted = vm.runInContext(`${source}\nhighlightCpp("int result = value + value;", "value");`, context);
+  assert.equal((highlighted.match(/class="syntax-match"/g) || []).length, 2);
+  assert.doesNotMatch(highlighted, /syntax-match[^>]*>int</);
+});
