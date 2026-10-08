@@ -145,6 +145,61 @@ let wheelCandidates = [];
 let wheelSpinAnimation;
 let wheelSettleAnimation;
 
+const answerIndent = "    ";
+
+function editAnswerIndent(value, selectionStart, selectionEnd, outdent = false) {
+  const start = Math.max(0, Math.min(selectionStart, value.length));
+  const end = Math.max(start, Math.min(selectionEnd, value.length));
+  if (!outdent && start === end) {
+    return {
+      value: value.slice(0, start) + answerIndent + value.slice(end),
+      selectionStart: start + answerIndent.length,
+      selectionEnd: start + answerIndent.length,
+    };
+  }
+
+  const blockStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const selectedBlock = value.slice(blockStart, end);
+  const lines = selectedBlock.split("\n");
+  let changedBeforeStart = 0;
+  let totalChange = 0;
+  const editedLines = lines.map((line, index) => {
+    if (index === lines.length - 1 && line === "" && selectedBlock.endsWith("\n")) return line;
+    if (!outdent) {
+      totalChange += answerIndent.length;
+      if (index === 0) changedBeforeStart = answerIndent.length;
+      return answerIndent + line;
+    }
+    const removable = Math.min(answerIndent.length, line.length - line.trimStart().length);
+    totalChange -= removable;
+    if (index === 0) changedBeforeStart = -removable;
+    return line.slice(removable);
+  });
+  return {
+    value: value.slice(0, blockStart) + editedLines.join("\n") + value.slice(end),
+    selectionStart: Math.max(blockStart, start + changedBeforeStart),
+    selectionEnd: Math.max(blockStart, end + totalChange),
+  };
+}
+
+function initializeAnswerEditor() {
+  const answer = document.querySelector("#answer");
+  if (!answer) return;
+  answer.addEventListener("keydown", event => {
+    if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    const scrollTop = answer.scrollTop;
+    const scrollLeft = answer.scrollLeft;
+    const edited = editAnswerIndent(answer.value, answer.selectionStart, answer.selectionEnd, event.shiftKey);
+    answer.value = edited.value;
+    answer.setSelectionRange(edited.selectionStart, edited.selectionEnd);
+    answer.scrollTop = scrollTop;
+    answer.scrollLeft = scrollLeft;
+  });
+}
+
+initializeAnswerEditor();
+
 async function openRepositoryFile(filePath) {
   const value = await api(`/api/v1/defenses/${defenseID}/repository/file?path=${encodeURIComponent(filePath)}`);
   document.querySelector("#source-title").textContent = value.path + (value.masked ? " · функция скрыта" : "");
