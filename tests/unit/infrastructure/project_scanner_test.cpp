@@ -102,8 +102,9 @@ bool TestFindsSupportedFiles() {
 bool TestSkipsExcludedDirectories() {
   TemporaryDirectory temporary_directory;
   const fs::path root = temporary_directory.path() / "project";
-  constexpr std::array<std::string_view, 13> kExcludedDirectoryNames{
+  constexpr std::array<std::string_view, 17> kExcludedDirectoryNames{
     ".git",
+    ".cache",
     ".github",
     ".idea",
     ".vscode",
@@ -112,6 +113,9 @@ bool TestSkipsExcludedDirectories() {
     "cache",
     "cmake-build-debug",
     "cmake-build-release",
+    "dist",
+    "node_modules",
+    "out",
     "test",
     "tests",
     "third_party",
@@ -140,8 +144,9 @@ bool TestSkipsExcludedDirectories() {
 bool TestSkipsExcludedDirectoriesCaseInsensitive() {
   TemporaryDirectory temporary_directory;
   const fs::path root = temporary_directory.path() / "project";
-  constexpr std::array<std::string_view, 13> kExcludedDirectoryNames{
+  constexpr std::array<std::string_view, 17> kExcludedDirectoryNames{
     ".GIT",
+    ".Cache",
     ".GitHub",
     ".Idea",
     ".VsCoDe",
@@ -150,6 +155,9 @@ bool TestSkipsExcludedDirectoriesCaseInsensitive() {
     "Cache",
     "CMAKE-BUILD-DEBUG",
     "Cmake-Build-Release",
+    "DIST",
+    "Node_Modules",
+    "OUT",
     "TEST",
     "Tests",
     "Third_Party",

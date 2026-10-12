@@ -278,6 +278,28 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
   /api/v1/imports:
+    get:
+      tags: [Imports]
+      operationId: listPendingImports
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: group_id
+          in: query
+          schema: { $ref: '#/components/schemas/Uuid' }
+      responses:
+        '200':
+          description: Imports waiting for teacher review
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Import' }
     post:
       tags: [Imports]
       operationId: createImport
@@ -314,6 +336,34 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/student/imports:
+    post:
+      tags: [Imports]
+      operationId: createStudentImport
+      x-roles: [student]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [archive]
+              properties:
+                archive: { type: string, format: binary }
+      responses:
+        '202':
+          description: ZIP validated and queued for teacher review
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Import' }
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
   /api/v1/imports/{import_id}:
@@ -378,6 +428,20 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
+  /api/v1/imports/{import_id}/archive:
+    get:
+      tags: [Imports]
+      operationId: downloadImportArchive
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ImportId'
+      responses:
+        '200':
+          description: Original or canonical ZIP visible to uploader and assigned staff
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
   /api/v1/imports/{import_id}/apply:
     post:
       tags: [Imports]
@@ -939,6 +1003,47 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+  /api/v1/admin/rosters/preview:
+    post:
+      tags: [Administration]
+      operationId: previewRosterImport
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RosterDocument' }
+      responses:
+        '200':
+          description: Normalized roster changes without database mutation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RosterPreview' }
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/admin/rosters/apply:
+    post:
+      tags: [Administration]
+      operationId: applyRosterImport
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RosterDocument' }
+      responses:
+        '200':
+          description: Roster applied transactionally
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RosterPreview' }
   /api/v1/admin/view-as-role:
     put:
       tags: [Administration]
@@ -1373,13 +1478,19 @@ components:
     GroupSubmission:
       type: object
       additionalProperties: false
-      required: [id, lab_id, lab_code, lab_name, version_number, created_at, student_record_id, github_login]
+      required: [id, lab_id, lab_code, lab_name, version_number, version_label, source, defense_status, created_at, student_record_id, github_login]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         lab_id: { $ref: '#/components/schemas/Uuid' }
         lab_code: { $ref: '#/components/schemas/Code' }
         lab_name: { type: string }
         version_number: { type: integer, minimum: 1 }
+        version_label: { type: string }
+        source: { enum: [teacher_import, student_zip] }
+        source_reference: { type: [string, 'null'] }
+        commit_sha: { type: [string, 'null'] }
+        approved_by: { type: [string, 'null'] }
+        defense_status: { type: string }
         created_at: { type: string, format: date-time }
         student_record_id: { $ref: '#/components/schemas/Uuid' }
         github_login: { type: string }
@@ -1392,6 +1503,55 @@ components:
           const: true
         ownership_checked:
           const: true
+    RosterDocument:
+      type: object
+      additionalProperties: false
+      required: [schema_version, organization, groups]
+      properties:
+        schema_version: { const: 1 }
+        organization:
+          type: object
+          additionalProperties: false
+          required: [github_login, name]
+          properties:
+            github_login: { type: string }
+            name: { type: string }
+        groups:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, name, students]
+            properties:
+              code: { $ref: '#/components/schemas/Code' }
+              name: { type: string }
+              students:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [full_name, github_login]
+                  properties:
+                    full_name: { type: string }
+                    github_login: { type: string }
+    RosterPreview:
+      type: object
+      required: [organization, groups, summary]
+      properties:
+        organization: { type: object }
+        groups:
+          type: array
+          items: { type: object }
+        summary:
+          type: object
+          required: [groups_created, groups_updated, students_created, students_updated, unchanged]
+          properties:
+            groups_created: { type: integer, minimum: 0 }
+            groups_updated: { type: integer, minimum: 0 }
+            students_created: { type: integer, minimum: 0 }
+            students_updated: { type: integer, minimum: 0 }
+            unchanged: { type: integer, minimum: 0 }
     ImportState:
       enum: [receiving, stored, validating, review_pending, approved, applying, completed, rejected, failed, cancelled]
     Import:
@@ -1409,6 +1569,8 @@ components:
           $ref: '#/components/schemas/ImportState'
         original_sha256:
           $ref: '#/components/schemas/Sha256'
+        original_filename:
+          type: string
         reviewed_by:
           oneOf:
             - $ref: '#/components/schemas/Uuid'

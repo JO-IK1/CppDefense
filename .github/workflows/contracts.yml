@@ -33,6 +33,7 @@ jobs:
           check-jsonschema --check-metaschema \
             contracts/manifests/group-v1.schema.json \
             contracts/manifests/lab-v1.schema.json \
+            contracts/rosters/roster-v1.schema.json \
             contracts/worker/v1/request.schema.json \
             contracts/worker/v1/response.schema.json
 
@@ -44,6 +45,9 @@ jobs:
           check-jsonschema \
             --schemafile contracts/manifests/lab-v1.schema.json \
             contracts/manifests/examples/lab-v1.json
+          check-jsonschema \
+            --schemafile contracts/rosters/roster-v1.schema.json \
+            contracts/rosters/examples/roster-v1.json
 
       - name: Validate worker examples
         run: |

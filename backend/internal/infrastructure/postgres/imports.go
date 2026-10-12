@@ -28,6 +28,7 @@ type Import struct {
 	CompressedSize   int64        `json:"compressed_size"`
 	UncompressedSize int64        `json:"uncompressed_size"`
 	CreatedAt        time.Time    `json:"created_at"`
+	OriginalFilename string       `json:"original_filename,omitempty"`
 	Items            []ImportItem `json:"items"`
 }
 type ImportItem struct {
@@ -108,10 +109,76 @@ func (r *ImportRepository) CreateReview(ctx context.Context, actor, groupID, kin
 	return r.Get(ctx, actor, id)
 }
 
+type StudentUploadContext struct {
+	GroupID         string
+	GroupCode       string
+	GitHubLogin     string
+	StudentRecordID string
+}
+
+func (r *ImportRepository) StudentContext(ctx context.Context, actor string) (StudentUploadContext, error) {
+	var value StudentUploadContext
+	err := r.db.pool.QueryRow(ctx, `
+		select sr.group_id,g.code::text,gi.login::text,sr.id
+		from users u
+		join github_identities gi on gi.user_id=u.id
+		join student_records sr on sr.user_id=u.id and sr.status='claimed'
+		join groups g on g.id=sr.group_id and g.status='active'
+		where u.id=$1 and u.status='active' and u.role='student'
+	`, actor).Scan(&value.GroupID, &value.GroupCode, &value.GitHubLogin, &value.StudentRecordID)
+	if err != nil {
+		return StudentUploadContext{}, appauth.ErrForbidden
+	}
+	return value, nil
+}
+
+func (r *ImportRepository) CreateStudentReview(ctx context.Context, actor, filename string, object appstorage.Object, analysis importer.Analysis) (Import, error) {
+	student, err := r.StudentContext(ctx, actor)
+	if err != nil {
+		return Import{}, err
+	}
+	if !strings.EqualFold(student.GroupCode, analysis.Manifest.GroupCode) || !strings.EqualFold(student.GitHubLogin, analysis.Manifest.Student.GitHubLogin) || len(analysis.Projects) != 1 {
+		return Import{}, fmt.Errorf("student archive identity mismatch")
+	}
+	tx, err := r.db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return Import{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var labID string
+	if err = tx.QueryRow(ctx, `select id from labs where group_id=$1 and code=$2 and status='active'`, student.GroupID, analysis.Manifest.LabCode).Scan(&labID); err != nil {
+		if err == pgx.ErrNoRows {
+			return Import{}, fmt.Errorf("unknown lab %s", analysis.Manifest.LabCode)
+		}
+		return Import{}, err
+	}
+	importID, err := domain.NewUUIDv7()
+	if err != nil {
+		return Import{}, err
+	}
+	_, err = tx.Exec(ctx, `insert into imports(id,group_id,kind,state,uploaded_by,original_object_key,original_sha256,compressed_size,uncompressed_size,schema_version,original_filename) values($1,$2,'lab','review_pending',$3,$4,$5,$6,$7,1,$8)`, importID, student.GroupID, actor, object.Key.String(), object.SHA256[:], object.Size, analysis.TotalSize, filename)
+	if err != nil {
+		return Import{}, err
+	}
+	itemID, err := domain.NewUUIDv7()
+	if err != nil {
+		return Import{}, err
+	}
+	project := analysis.Projects[0]
+	_, err = tx.Exec(ctx, `insert into import_items(id,import_id,student_record_id,lab_id,github_login_input,project_path,action,file_count,uncompressed_size) values($1,$2,$3,$4,$5,$6,'create_version',$7,$8)`, itemID, importID, student.StudentRecordID, labID, student.GitHubLogin, project.Item.ProjectPath, project.FileCount, project.Size)
+	if err != nil {
+		return Import{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Import{}, err
+	}
+	return r.Get(ctx, actor, importID)
+}
+
 func (r *ImportRepository) Get(ctx context.Context, actor, id string) (Import, error) {
 	var v Import
 	var digest []byte
-	e := r.db.pool.QueryRow(ctx, `select i.id,i.group_id,i.kind::text,i.state::text,i.original_sha256,i.compressed_size,coalesce(i.uncompressed_size,0),i.created_at from imports i join users u on u.id=$1 and u.status='active' where i.id=$2 and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=i.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.GroupID, &v.Kind, &v.State, &digest, &v.CompressedSize, &v.UncompressedSize, &v.CreatedAt)
+	e := r.db.pool.QueryRow(ctx, `select i.id,i.group_id,i.kind::text,i.state::text,i.original_sha256,i.compressed_size,coalesce(i.uncompressed_size,0),i.created_at,coalesce(i.original_filename,'') from imports i join users u on u.id=$1 and u.status='active' where i.id=$2 and (i.uploaded_by=u.id or u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=i.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.GroupID, &v.Kind, &v.State, &digest, &v.CompressedSize, &v.UncompressedSize, &v.CreatedAt, &v.OriginalFilename)
 	if e != nil {
 		return Import{}, appauth.ErrForbidden
 	}
@@ -129,6 +196,53 @@ func (r *ImportRepository) Get(ctx context.Context, actor, id string) (Import, e
 		v.Items = append(v.Items, x)
 	}
 	return v, rows.Err()
+}
+
+func (r *ImportRepository) ListReviewPending(ctx context.Context, actor, groupID string) ([]Import, error) {
+	rows, err := r.db.pool.Query(ctx, `
+		select i.id from imports i
+		join users u on u.id=$1 and u.status='active'
+		where i.state='review_pending' and ($2='' or i.group_id=nullif($2,'')::uuid)
+		  and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=i.group_id and gt.teacher_user_id=u.id)))
+		order by i.created_at
+	`, actor, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	values := make([]Import, 0, len(ids))
+	for _, id := range ids {
+		value, getErr := r.Get(ctx, actor, id)
+		if getErr != nil {
+			return nil, getErr
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func (r *ImportRepository) OriginalObject(ctx context.Context, actor, importID string) (appstorage.Key, string, error) {
+	if _, err := r.Get(ctx, actor, importID); err != nil {
+		return appstorage.Key{}, "", err
+	}
+	var keyValue, filename string
+	err := r.db.pool.QueryRow(ctx, `select original_object_key,coalesce(original_filename,'archive.zip') from imports where id=$1`, importID).Scan(&keyValue, &filename)
+	if err != nil {
+		return appstorage.Key{}, "", err
+	}
+	key, err := appstorage.ParseKey(keyValue)
+	return key, filename, err
 }
 
 func (r *ImportRepository) Review(ctx context.Context, actor, id, decision, sha string, checklist map[string]any, reason string) (Import, error) {
@@ -174,6 +288,8 @@ type ApplyItem struct {
 	ObjectKey          appstorage.Key
 	SHA256             [32]byte
 	SourceManifestJSON []byte
+	VersionLabel       string
+	SourceReference    string
 }
 
 func (r *ImportRepository) CommitApply(ctx context.Context, actor, importID string, items []ApplyItem) ([]appstorage.Key, error) {
@@ -187,6 +303,14 @@ func (r *ImportRepository) CommitApply(ctx context.Context, actor, importID stri
 		return nil, appauth.ErrConflict
 	}
 	var duplicateObjects []appstorage.Key
+	var uploaderRole, originalFilename, reviewedBy string
+	if e = tx.QueryRow(ctx, `select u.role::text,coalesce(i.original_filename,''),i.reviewed_by from imports i join users u on u.id=i.uploaded_by where i.id=$1`, importID).Scan(&uploaderRole, &originalFilename, &reviewedBy); e != nil {
+		return nil, e
+	}
+	source := "teacher_import"
+	if uploaderRole == "student" {
+		source = "student_zip"
+	}
 	for _, item := range items {
 		if !json.Valid(item.SourceManifestJSON) {
 			return nil, fmt.Errorf("invalid source manifest")
@@ -212,7 +336,15 @@ func (r *ImportRepository) CommitApply(ctx context.Context, actor, importID stri
 			if e != nil {
 				return nil, e
 			}
-			_, e = tx.Exec(ctx, `insert into submission_versions(id,student_record_id,lab_id,version_no,source,original_import_id,normalized_object_key,normalized_sha256,source_manifest,created_by)values($1,$2,$3,$4,'teacher_import',$5,$6,$7,$8::jsonb,$9)`, versionID, item.StudentRecordID, item.LabID, versionNumber, importID, item.ObjectKey.String(), item.SHA256[:], string(item.SourceManifestJSON), actor)
+			label := item.VersionLabel
+			if label == "" {
+				label = fmt.Sprintf("version_%d", versionNumber)
+			}
+			reference := item.SourceReference
+			if reference == "" {
+				reference = originalFilename
+			}
+			_, e = tx.Exec(ctx, `insert into submission_versions(id,student_record_id,lab_id,version_no,source,original_import_id,normalized_object_key,normalized_sha256,source_manifest,created_by,version_label,source_reference,approved_by)values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)`, versionID, item.StudentRecordID, item.LabID, versionNumber, source, importID, item.ObjectKey.String(), item.SHA256[:], string(item.SourceManifestJSON), actor, label, nullableString(reference), reviewedBy)
 			if e != nil {
 				return nil, e
 			}

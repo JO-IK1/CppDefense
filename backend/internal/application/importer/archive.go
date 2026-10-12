@@ -28,12 +28,15 @@ func DefaultLimits() Limits {
 }
 
 type Manifest struct {
-	SchemaVersion int     `json:"schema_version"`
-	Kind          string  `json:"kind"`
-	GroupCode     string  `json:"group_code"`
-	LabCode       string  `json:"lab_code,omitempty"`
-	Student       Student `json:"student,omitempty"`
-	ProjectPath   string  `json:"project_path,omitempty"`
+	SchemaVersion   int     `json:"schema_version"`
+	Kind            string  `json:"kind"`
+	GroupCode       string  `json:"group_code"`
+	LabCode         string  `json:"lab_code,omitempty"`
+	Student         Student `json:"student,omitempty"`
+	ProjectPath     string  `json:"project_path,omitempty"`
+	VersionLabel    string  `json:"version_label,omitempty"`
+	Source          string  `json:"source,omitempty"`
+	SourceReference string  `json:"source_reference,omitempty"`
 	// Deprecated compatibility fields. Defense settings are chosen by the
 	// teacher and these values are deliberately ignored.
 	TimeLimitSeconds           *int   `json:"time_limit,omitempty"`

@@ -31,6 +31,18 @@
     "project_path": {
       "$ref": "#/$defs/projectPath"
     },
+    "version_label": {
+      "type": "string",
+      "pattern": "^deadline_[0-9]+$"
+    },
+    "source": {
+      "enum": ["student_zip", "teacher_import"]
+    },
+    "source_reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
     "time_limit": {
       "type": "integer",
       "minimum": 1,

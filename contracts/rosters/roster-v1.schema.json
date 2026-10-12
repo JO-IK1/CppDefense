@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cppdefense.jo-a1.ru/schemas/rosters/roster-v1.schema.json",
+  "title": "CppDefense organization roster v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "organization", "groups"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "organization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["github_login", "name"],
+      "properties": {
+        "github_login": { "$ref": "#/$defs/githubLogin" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "name", "students"],
+        "properties": {
+          "code": { "$ref": "#/$defs/code" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "students": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["full_name", "github_login"],
+              "properties": {
+                "full_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "github_login": { "$ref": "#/$defs/githubLogin" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+    },
+    "githubLogin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 39,
+      "pattern": "^(?!-)(?!.*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+    }
+  }
+}

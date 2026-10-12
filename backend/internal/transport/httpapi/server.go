@@ -54,6 +54,8 @@ func New(dependencies Dependencies) http.Handler {
 		mux.HandleFunc("PUT /api/v1/admin/users/{user_id}/role", adminHandler.setRole)
 		mux.HandleFunc("POST /api/v1/admin/users/{user_id}/block", adminHandler.block)
 		mux.HandleFunc("POST /api/v1/admin/groups/{group_id}/teachers", adminHandler.assignTeacher)
+		mux.HandleFunc("POST /api/v1/admin/rosters/preview", adminHandler.previewRoster)
+		mux.HandleFunc("POST /api/v1/admin/rosters/apply", adminHandler.applyRoster)
 		mux.HandleFunc("PUT /api/v1/admin/view-as-role", adminHandler.view)
 		mux.HandleFunc("DELETE /api/v1/admin/view-as-role", adminHandler.clearView)
 	}
@@ -69,6 +71,9 @@ func New(dependencies Dependencies) http.Handler {
 	if dependencies.Imports != nil && dependencies.Files != nil && dependencies.Submissions != nil {
 		importHandler := &importHTTP{repository: dependencies.Imports, files: dependencies.Files, submissions: dependencies.Submissions, auth: authHandler}
 		mux.HandleFunc("POST /api/v1/imports", importHandler.create)
+		mux.HandleFunc("POST /api/v1/student/imports", importHandler.createStudent)
+		mux.HandleFunc("GET /api/v1/imports", importHandler.listPending)
+		mux.HandleFunc("GET /api/v1/imports/{import_id}/archive", importHandler.downloadOriginal)
 		mux.HandleFunc("GET /api/v1/imports/{import_id}", importHandler.get)
 		mux.HandleFunc("POST /api/v1/imports/{import_id}/review", importHandler.review)
 		mux.HandleFunc("POST /api/v1/imports/{import_id}/apply", importHandler.apply)

@@ -17,6 +17,7 @@ struct ProjectScannerOptions {
       ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"};
   std::vector<std::string> excluded_directory_names{
       ".git",
+      ".cache",
       ".github",
       ".idea",
       ".vscode",
@@ -25,6 +26,9 @@ struct ProjectScannerOptions {
       "cache",
       "cmake-build-debug",
       "cmake-build-release",
+      "dist",
+      "node_modules",
+      "out",
       "test",
       "tests",
       "third_party",

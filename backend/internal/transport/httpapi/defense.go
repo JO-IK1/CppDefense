@@ -219,9 +219,9 @@ func visibleRepositoryPath(value string) bool {
 		return false
 	}
 	hiddenDirectories := map[string]struct{}{
-		".git": {}, ".github": {}, ".idea": {}, ".vscode": {}, "_deps": {},
+		".cache": {}, ".git": {}, ".github": {}, ".idea": {}, ".vscode": {}, "_deps": {},
 		"build": {}, "cache": {}, "cmake-build-debug": {}, "cmake-build-release": {},
-		"third_party": {}, "vendor": {},
+		"dist": {}, "node_modules": {}, "out": {}, "third_party": {}, "vendor": {},
 	}
 	parts := strings.Split(value, "/")
 	for _, part := range parts[:len(parts)-1] {

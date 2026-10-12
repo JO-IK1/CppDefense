@@ -77,7 +77,11 @@ emit_stage() {
   printf '\n__CPPDEFENSE_END__\n'
 }
 
-cmake -S /workspace -B /build -DCMAKE_BUILD_TYPE=Release >/tmp/cppdefense-configure.log 2>&1
+cmake -S /workspace -B /build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest \
+  -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+  >/tmp/cppdefense-configure.log 2>&1
 configure_code=$?
 emit_stage configure "$configure_code"
 if [ "$configure_code" -ne 0 ]; then exit 0; fi

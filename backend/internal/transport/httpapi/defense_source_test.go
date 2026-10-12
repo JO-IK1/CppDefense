@@ -40,6 +40,9 @@ func TestVisibleRepositoryPathHidesGeneratedAndVendoredTrees(t *testing.T) {
 		"vendor/library/source.cpp",
 		".github/workflows/ci.yml",
 		"src/_deps/library/header.hpp",
+		"node_modules/native/source.cpp",
+		"dist/generated.cpp",
+		".cache/generated.cpp",
 	} {
 		if visibleRepositoryPath(value) {
 			t.Fatalf("infrastructure path is visible: %q", value)

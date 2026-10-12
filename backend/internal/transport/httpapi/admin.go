@@ -3,7 +3,9 @@ package httpapi
 import (
 	"github.com/JO-IK1/CppDefense/backend/internal/application/audit"
 	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
+	"github.com/JO-IK1/CppDefense/backend/internal/application/roster"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
+	"io"
 	"net/http"
 )
 
@@ -11,6 +13,62 @@ type adminHTTP struct {
 	repository *postgres.AdminRepository
 	auth       *authHTTP
 	audit      *audit.Service
+}
+
+func (h *adminHTTP) previewRoster(w http.ResponseWriter, r *http.Request) {
+	_, a, _, ok := h.auth.authenticate(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeProblem(w, r, 413, "ROSTER_TOO_LARGE", "Файл списка групп слишком большой")
+		return
+	}
+	document, err := roster.Parse(data)
+	if err != nil {
+		writeProblem(w, r, 422, "ROSTER_INVALID", err.Error())
+		return
+	}
+	value, err := h.repository.PreviewRoster(r.Context(), a.ID, document)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, value)
+}
+
+func (h *adminHTTP) applyRoster(w http.ResponseWriter, r *http.Request) {
+	s, a, c, ok := h.auth.authenticate(w, r)
+	if !ok || !h.auth.authorizeMutation(w, r, s, c) {
+		return
+	}
+	if !validIdempotencyKey(r) {
+		writeProblem(w, r, 400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key is required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeProblem(w, r, 413, "ROSTER_TOO_LARGE", "Файл списка групп слишком большой")
+		return
+	}
+	document, err := roster.Parse(data)
+	if err != nil {
+		writeProblem(w, r, 422, "ROSTER_INVALID", err.Error())
+		return
+	}
+	value, err := h.repository.ApplyRoster(r.Context(), a.ID, document)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if err = h.audit.Record(r.Context(), audit.Event{ActorID: &a.ID, ActorKind: "user", Action: "admin.roster.apply", TargetType: "organization", RequestID: RequestID(r.Context()), Metadata: map[string]any{"organization": document.Organization.GitHubLogin, "groups": len(document.Groups)}}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, value)
 }
 
 func (h *adminHTTP) users(w http.ResponseWriter, r *http.Request) {

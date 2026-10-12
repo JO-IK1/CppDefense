@@ -65,6 +65,14 @@ document.querySelectorAll("[data-select-group]").forEach(button => {
   });
 });
 
+const groupSelect = document.querySelector("#group-select");
+groupSelect?.addEventListener("change", () => {
+  document.querySelectorAll('[name="group_id"]').forEach(input => {
+    input.value = groupSelect.value;
+  });
+  if (groupSelect.value) loadGroupSubmissions(groupSelect.value);
+});
+
 document.querySelector("#group-form")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = new FormData(event.target);
@@ -137,6 +145,87 @@ document.querySelector("#apply-import")?.addEventListener("click", async () => {
   const id = document.querySelector('#review-form [name="import_id"]').value;
   const result = document.querySelector("#import-result");
   await renderImportOperation(result, () => api(`/api/v1/imports/${id}/apply`, { method: "POST" }));
+});
+
+document.querySelector("#student-import-form")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const payload = new FormData();
+  payload.set("archive", form.get("archive"));
+  const root = document.querySelector("#student-import-result");
+  const value = await renderImportOperation(root, () => api("/api/v1/student/imports", { method: "POST", body: payload }));
+  if (value) {
+    root.querySelector("p").textContent = "Архив проверен и отправлен преподавателю. После подтверждения версия появится в таблице.";
+    event.target.reset();
+  }
+});
+
+let rosterDocumentText = "";
+
+function renderRosterPreview(value, applied = false) {
+  const root = document.querySelector("#roster-preview");
+  const actionLabels = { create: "будет создано", update: "будет обновлено", unchanged: "без изменений" };
+  const card = node("div", "operation-card operation-card--success");
+  card.append(node("strong", "", applied ? "Состав групп обновлён" : `${value.organization.name} · предварительная проверка`));
+  card.append(node("p", "", `Новых групп: ${value.summary.groups_created}; обновляемых групп: ${value.summary.groups_updated}; новых студентов: ${value.summary.students_created}; обновляемых студентов: ${value.summary.students_updated}; без изменений: ${value.summary.unchanged}.`));
+  const list = node("div", "roster-preview-list");
+  value.groups.forEach(group => {
+    const details = document.createElement("details");
+    const summary = node("summary", "", `${group.code} · ${group.name} · ${actionLabels[group.action] || group.action}`);
+    details.append(summary);
+    const students = node("ul");
+    group.students.forEach(student => students.append(node("li", "", `${student.full_name} · @${student.github_login} · ${actionLabels[student.action] || student.action}`)));
+    details.append(students);
+    list.append(details);
+  });
+  card.append(list);
+  root.replaceChildren(card);
+}
+
+async function refreshGroupOptions() {
+  const select = document.querySelector("#group-select");
+  if (!select) return;
+  const selected = select.value;
+  const value = await api("/api/v1/groups");
+  const placeholder = node("option", "", "Выберите группу");
+  placeholder.value = "";
+  select.replaceChildren(placeholder, ...value.items.map(group => {
+    const option = node("option", "", `${group.code} · ${group.name}`);
+    option.value = group.id;
+    return option;
+  }));
+  if ([...select.options].some(option => option.value === selected)) select.value = selected;
+}
+
+document.querySelector("#roster-import-form")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const file = new FormData(event.target).get("roster");
+  rosterDocumentText = await file.text();
+  const root = document.querySelector("#roster-preview");
+  try {
+    const value = await api("/api/v1/admin/rosters/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: rosterDocumentText });
+    renderRosterPreview(value);
+    document.querySelector("#apply-roster").disabled = false;
+  } catch (error) {
+    rosterDocumentText = "";
+    document.querySelector("#apply-roster").disabled = true;
+    renderOperationResult(root, error, true);
+  }
+});
+
+document.querySelector("#apply-roster")?.addEventListener("click", async event => {
+  if (!rosterDocumentText) return;
+  event.currentTarget.disabled = true;
+  const root = document.querySelector("#roster-preview");
+  try {
+    const value = await api("/api/v1/admin/rosters/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: rosterDocumentText });
+    renderRosterPreview(value, true);
+    rosterDocumentText = "";
+    await refreshGroupOptions();
+  } catch (error) {
+    renderOperationResult(root, error, true);
+    event.currentTarget.disabled = false;
+  }
 });
 
 let defenseID;
@@ -263,6 +352,42 @@ function initializeAnswerEditor() {
 
 initializeAnswerEditor();
 
+function renderRepositoryTree(root, items, onOpen) {
+  const tree = { directories: new Map(), files: [] };
+  for (const item of items) {
+    const parts = item.path.split("/").filter(Boolean);
+    let branch = tree;
+    parts.slice(0, -1).forEach(part => {
+      if (!branch.directories.has(part)) branch.directories.set(part, { directories: new Map(), files: [] });
+      branch = branch.directories.get(part);
+    });
+    branch.files.push({ ...item, name: parts.at(-1) });
+  }
+  const renderBranch = (branch, depth = 0) => {
+    const fragment = document.createDocumentFragment();
+    [...branch.directories.entries()].sort(([left], [right]) => left.localeCompare(right)).forEach(([name, child]) => {
+      const details = node("details", "repository-directory");
+      if (depth === 0) details.open = true;
+      const summary = node("summary");
+      summary.title = name;
+      summary.append(node("span", "repository-path-label", name));
+      details.append(summary, renderBranch(child, depth + 1));
+      fragment.append(details);
+    });
+    branch.files.sort((left, right) => left.name.localeCompare(right.name)).forEach(item => {
+      const button = node("button", "repository-file");
+      button.type = "button";
+      button.dataset.path = item.path;
+      button.title = `${item.path} · ${item.size} байт`;
+      button.append(node("span", "repository-path-label", item.name));
+      button.onclick = () => onOpen(item.path);
+      fragment.append(button);
+    });
+    return fragment;
+  };
+  root.replaceChildren(renderBranch(tree));
+}
+
 async function openRepositoryFile(filePath) {
   const value = await api(`/api/v1/defenses/${defenseID}/repository/file?path=${encodeURIComponent(filePath)}`);
   document.querySelector("#source-title").textContent = value.path + (value.masked ? " · функция скрыта" : "");
@@ -274,14 +399,7 @@ async function loadRepository(selectedPath) {
   if (repositoryLoaded || !defenseID) return;
   const value = await api(`/api/v1/defenses/${defenseID}/repository`);
   const root = document.querySelector("#repository-files");
-  root.replaceChildren(...value.items.map(item => {
-    const button = node("button", "repository-file", item.path);
-    button.type = "button";
-    button.dataset.path = item.path;
-    button.title = `${item.path} · ${item.size} байт`;
-    button.onclick = () => openRepositoryFile(item.path);
-    return button;
-  }));
+  renderRepositoryTree(root, value.items, openRepositoryFile);
   repositoryLoaded = true;
   if (selectedPath) await openRepositoryFile(selectedPath);
 }
@@ -434,6 +552,7 @@ async function refreshDefense() {
     const value = await api(`/api/v1/defenses/${defenseID}`);
     const status = document.querySelector("#defense-status");
     const timer = document.querySelector("#timer");
+    const timerBar = document.querySelector("#defense-timer-bar");
     draftVersion = value.draft_version || draftVersion;
     renderWheelCandidates(value.wheel_candidates);
     if (value.current_draft && !document.querySelector("#answer").value) {
@@ -451,8 +570,15 @@ async function refreshDefense() {
     }
     if (value.status === "active" && value.deadline_at) {
       const left = Math.max(0, Math.floor((Date.parse(value.deadline_at) - Date.now()) / 1000));
-      timer.textContent = `Осталось ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
-    } else timer.textContent = "";
+      timer.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+      timerBar?.classList.remove("hidden", "defense-timer-bar--warning", "defense-timer-bar--danger");
+      if (left <= 60) timerBar?.classList.add("defense-timer-bar--danger");
+      else if (left <= 300) timerBar?.classList.add("defense-timer-bar--warning");
+    } else {
+      timer.textContent = "";
+      timerBar?.classList.add("hidden");
+      timerBar?.classList.remove("defense-timer-bar--warning", "defense-timer-bar--danger");
+    }
     return ["passed", "failed", "error", "expired", "cancelled"].includes(value.status);
   } finally {
     defenseRefreshInFlight = false;
@@ -692,13 +818,7 @@ async function loadTeacherRepository() {
   const value = await api(`/api/v1/defenses/${teacherDefense.id}/repository`);
   teacherFiles = value.items;
   const root = document.querySelector("#teacher-repository-files");
-  root.replaceChildren(...teacherFiles.map(item => {
-    const button = node("button", "repository-file", item.path);
-    button.type = "button";
-    button.dataset.path = item.path;
-    button.onclick = () => openTeacherRepositoryFile(item.path);
-    return button;
-  }));
+  renderRepositoryTree(root, teacherFiles, openTeacherRepositoryFile);
   const firstCandidate = (teacherDefense.candidate_catalog || []).find(teacherCandidateAllowed);
   const initialPath = firstCandidate?.file_path || teacherFiles[0]?.path;
   if (initialPath) await openTeacherRepositoryFile(initialPath);
@@ -801,10 +921,16 @@ document.querySelector("#configure-defense-form")?.addEventListener("submit", as
   }
 });
 
-document.querySelector("#submissions-form")?.addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = new FormData(event.target);
-  const value = await api(`/api/v1/groups/${form.get("group_id")}/submissions`);
+function versionDescription(item) {
+  const date = new Date(item.created_at).toLocaleDateString("ru-RU");
+  const source = item.source === "student_zip" ? "ZIP" : "преподаватель";
+  const commit = item.commit_sha ? ` · ${item.commit_sha.slice(0, 8)}` : "";
+  const approver = item.approved_by ? ` · подтвердил ${item.approved_by}` : "";
+  return `${item.version_label || `version_${item.version_number}`} · ${date}${commit} · ${source}${approver}`;
+}
+
+async function loadGroupSubmissions(groupID) {
+  const value = await api(`/api/v1/groups/${groupID}/submissions`);
   const root = document.querySelector("#submissions-result");
   if (!value.items.length) {
     root.replaceChildren(node("div", "empty-state", "В этой группе пока нет загруженных работ"));
@@ -819,43 +945,101 @@ document.querySelector("#submissions-form")?.addEventListener("submit", async ev
   const table = node("table", "lab-table lab-table--teacher");
   const head = document.createElement("thead");
   const heading = document.createElement("tr");
-  ["Студент и лабораторная", "Версия", "Действия"].forEach(label => heading.append(node("th", "", label)));
+  ["Студент", "Лабораторная", "Версия", "Статус", "Действия"].forEach(label => heading.append(node("th", "", label)));
   head.append(heading);
   const body = document.createElement("tbody");
   groups.forEach(items => {
     items.sort((left, right) => Number(right.version_number) - Number(left.version_number));
     const current = items[0];
     const row = document.createElement("tr");
-    const titleCell = document.createElement("td");
+    const studentCell = document.createElement("td");
+    studentCell.append(node("strong", "", `@${current.github_login}`));
+    const labCell = document.createElement("td");
     const title = node("div", "lab-title-cell");
-    title.append(node("strong", "", current.lab_name || current.lab_code), node("span", "lab-table__meta", `@${current.github_login} · ${current.lab_code}`));
-    titleCell.append(title);
+    title.append(node("span", "badge", current.lab_code), node("strong", "", current.lab_name || current.lab_code));
+    labCell.append(title);
     const versionCell = document.createElement("td");
     const select = node("select", "lab-version-select");
     select.setAttribute("aria-label", `Версия ${current.lab_name || current.lab_code} студента ${current.github_login}`);
     items.forEach(item => {
-      const option = node("option", "", `Версия ${item.version_number}`);
+      const option = node("option", "", versionDescription(item));
       option.value = item.id;
+      option.dataset.status = item.defense_status;
       select.append(option);
     });
     versionCell.append(select);
+    const statusCell = document.createElement("td");
+    const status = node("span", "submission-status", current.defense_status === "confirmed" ? "Подтверждена" : (defenseStatusLabels[current.defense_status] || current.defense_status));
+    statusCell.append(status);
     const actionsCell = document.createElement("td");
     const actions = node("div", "lab-row-actions");
     const download = node("a", "secondary-button", "Скачать ZIP");
     download.href = `/api/v1/submissions/${select.value}/archive`;
     select.addEventListener("change", () => {
       download.href = `/api/v1/submissions/${select.value}/archive`;
+      status.textContent = select.selectedOptions[0].dataset.status === "confirmed" ? "Подтверждена" : (defenseStatusLabels[select.selectedOptions[0].dataset.status] || select.selectedOptions[0].dataset.status);
     });
     actions.append(download);
     actionsCell.append(actions);
-    row.append(titleCell, versionCell, actionsCell);
+    row.append(studentCell, labCell, versionCell, statusCell, actionsCell);
     body.append(row);
   });
   table.append(head, body);
   const wrapper = node("div", "lab-table-wrap");
   wrapper.append(table);
   root.replaceChildren(wrapper);
+}
+
+document.querySelector("#submissions-form")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  await loadGroupSubmissions(form.get("group_id"));
 });
+
+async function loadPendingImports() {
+  const groupID = document.querySelector("#group-select")?.value || "";
+  const suffix = groupID ? `?group_id=${encodeURIComponent(groupID)}` : "";
+  const value = await api(`/api/v1/imports${suffix}`);
+  const root = document.querySelector("#pending-imports");
+  if (!value.items.length) {
+    root.replaceChildren(node("div", "empty-state", "ZIP, ожидающих подтверждения, нет"));
+    return;
+  }
+  root.replaceChildren(...value.items.map(item => {
+    const card = node("article", "management-item pending-import");
+    const first = item.items[0] || {};
+    card.append(node("strong", "", item.original_filename || `Импорт ${item.id}`));
+    card.append(node("span", "", `@${first.github_login || "—"} · ${first.file_count || 0} файлов · SHA-256 ${item.original_sha256.slice(0, 12)}…`));
+    const actions = node("div", "lab-row-actions");
+    const approve = node("button", "", "Подтвердить версию");
+    approve.type = "button";
+    approve.onclick = async () => {
+      approve.disabled = true;
+      try {
+        await api(`/api/v1/imports/${item.id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: "approve", archive_sha256: item.original_sha256, checklist: { paths_checked: true, ownership_checked: true }, reason: "" }) });
+        await api(`/api/v1/imports/${item.id}/apply`, { method: "POST" });
+        await loadPendingImports();
+        if (groupID) await loadGroupSubmissions(groupID);
+      } catch (error) {
+        renderOperationResult(document.querySelector("#import-result"), error, true);
+        approve.disabled = false;
+      }
+    };
+    const reject = node("button", "danger-button", "Отклонить");
+    reject.type = "button";
+    reject.onclick = async () => {
+      const reason = prompt("Укажите причину отклонения ZIP");
+      if (!reason) return;
+      await api(`/api/v1/imports/${item.id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: "reject", archive_sha256: item.original_sha256, checklist: { paths_checked: true, ownership_checked: true }, reason }) });
+      await loadPendingImports();
+    };
+    actions.append(preview, approve, reject);
+    card.append(actions);
+    return card;
+  }));
+}
+
+document.querySelector("#load-pending-imports")?.addEventListener("click", loadPendingImports);
 
 async function loadPendingLinks() {
   const value = await api("/api/v1/admin/pending-links");

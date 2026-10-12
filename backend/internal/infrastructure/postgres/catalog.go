@@ -35,12 +35,18 @@ type Lab struct {
 }
 
 type Submission struct {
-	ID            string    `json:"id"`
-	LabID         string    `json:"lab_id"`
-	LabCode       string    `json:"lab_code"`
-	LabName       string    `json:"lab_name"`
-	VersionNumber int       `json:"version_number"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	LabID           string    `json:"lab_id"`
+	LabCode         string    `json:"lab_code"`
+	LabName         string    `json:"lab_name"`
+	VersionNumber   int       `json:"version_number"`
+	VersionLabel    string    `json:"version_label"`
+	Source          string    `json:"source"`
+	SourceReference *string   `json:"source_reference,omitempty"`
+	CommitSHA       *string   `json:"commit_sha,omitempty"`
+	ApprovedBy      *string   `json:"approved_by,omitempty"`
+	DefenseStatus   string    `json:"defense_status"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 type GroupSubmission struct {
 	Submission
@@ -49,7 +55,7 @@ type GroupSubmission struct {
 }
 
 func (r *CatalogRepository) StudentSubmissions(ctx context.Context, actor string) ([]Submission, error) {
-	rows, e := r.db.pool.Query(ctx, `select sv.id,sv.lab_id,l.code::text,l.name,sv.version_no,sv.created_at from submission_versions sv join student_records sr on sr.id=sv.student_record_id join labs l on l.id=sv.lab_id join users u on u.id=$1 and u.status='active' and u.role='student' where sr.user_id=u.id order by l.code,sv.version_no desc`, actor)
+	rows, e := r.db.pool.Query(ctx, `select sv.id,sv.lab_id,l.code::text,l.name,sv.version_no,coalesce(nullif(sv.version_label,''),'version_'||sv.version_no::text),sv.source::text,sv.source_reference,sv.commit_sha,coalesce(approver.display_name,agi.login::text),coalesce(latest.status::text,'confirmed'),sv.created_at from submission_versions sv join student_records sr on sr.id=sv.student_record_id join labs l on l.id=sv.lab_id join users u on u.id=$1 and u.status='active' and u.role='student' left join users approver on approver.id=sv.approved_by left join github_identities agi on agi.user_id=approver.id left join lateral(select d.status from defenses d where d.submission_version_id=sv.id order by d.created_at desc limit 1) latest on true where sr.user_id=u.id order by l.code,sv.version_no desc`, actor)
 	if e != nil {
 		return nil, e
 	}
@@ -57,7 +63,7 @@ func (r *CatalogRepository) StudentSubmissions(ctx context.Context, actor string
 	var out []Submission
 	for rows.Next() {
 		var v Submission
-		if e = rows.Scan(&v.ID, &v.LabID, &v.LabCode, &v.LabName, &v.VersionNumber, &v.CreatedAt); e != nil {
+		if e = rows.Scan(&v.ID, &v.LabID, &v.LabCode, &v.LabName, &v.VersionNumber, &v.VersionLabel, &v.Source, &v.SourceReference, &v.CommitSHA, &v.ApprovedBy, &v.DefenseStatus, &v.CreatedAt); e != nil {
 			return nil, e
 		}
 		out = append(out, v)
@@ -70,7 +76,7 @@ func (r *CatalogRepository) SubmissionsByRecord(ctx context.Context, actor, reco
 	if e := r.db.pool.QueryRow(ctx, `select exists(select 1 from users where id=$1 and status='active' and role='admin')`, actor).Scan(&admin); e != nil || !admin {
 		return nil, appauth.ErrForbidden
 	}
-	rows, e := r.db.pool.Query(ctx, `select sv.id,sv.lab_id,l.code::text,l.name,sv.version_no,sv.created_at from submission_versions sv join labs l on l.id=sv.lab_id join student_records sr on sr.id=sv.student_record_id join groups g on g.id=sr.group_id where sr.id=$1 and g.is_demo order by l.code,sv.version_no desc`, record)
+	rows, e := r.db.pool.Query(ctx, `select sv.id,sv.lab_id,l.code::text,l.name,sv.version_no,coalesce(nullif(sv.version_label,''),'version_'||sv.version_no::text),sv.source::text,sv.source_reference,sv.commit_sha,coalesce(approver.display_name,agi.login::text),coalesce(latest.status::text,'confirmed'),sv.created_at from submission_versions sv join labs l on l.id=sv.lab_id join student_records sr on sr.id=sv.student_record_id join groups g on g.id=sr.group_id left join users approver on approver.id=sv.approved_by left join github_identities agi on agi.user_id=approver.id left join lateral(select d.status from defenses d where d.submission_version_id=sv.id order by d.created_at desc limit 1) latest on true where sr.id=$1 and g.is_demo order by l.code,sv.version_no desc`, record)
 	if e != nil {
 		return nil, e
 	}
@@ -78,7 +84,7 @@ func (r *CatalogRepository) SubmissionsByRecord(ctx context.Context, actor, reco
 	var out []Submission
 	for rows.Next() {
 		var v Submission
-		if e = rows.Scan(&v.ID, &v.LabID, &v.LabCode, &v.LabName, &v.VersionNumber, &v.CreatedAt); e != nil {
+		if e = rows.Scan(&v.ID, &v.LabID, &v.LabCode, &v.LabName, &v.VersionNumber, &v.VersionLabel, &v.Source, &v.SourceReference, &v.CommitSHA, &v.ApprovedBy, &v.DefenseStatus, &v.CreatedAt); e != nil {
 			return nil, e
 		}
 		out = append(out, v)
@@ -94,7 +100,7 @@ func (r *CatalogRepository) GroupSubmissions(ctx context.Context, actor, group s
 	if !ok {
 		return nil, appauth.ErrForbidden
 	}
-	rows, e := r.db.pool.Query(ctx, `select sv.id,sv.lab_id,l.code::text,l.name,sv.version_no,sv.created_at,sr.id,sr.github_login_expected::text from submission_versions sv join student_records sr on sr.id=sv.student_record_id join labs l on l.id=sv.lab_id where sr.group_id=$1 order by sr.github_login_expected,l.code,sv.version_no desc`, group)
+	rows, e := r.db.pool.Query(ctx, `select sv.id,sv.lab_id,l.code::text,l.name,sv.version_no,coalesce(nullif(sv.version_label,''),'version_'||sv.version_no::text),sv.source::text,sv.source_reference,sv.commit_sha,coalesce(approver.display_name,agi.login::text),coalesce(latest.status::text,'confirmed'),sv.created_at,sr.id,sr.github_login_expected::text from submission_versions sv join student_records sr on sr.id=sv.student_record_id join labs l on l.id=sv.lab_id left join users approver on approver.id=sv.approved_by left join github_identities agi on agi.user_id=approver.id left join lateral(select d.status from defenses d where d.submission_version_id=sv.id order by d.created_at desc limit 1) latest on true where sr.group_id=$1 order by sr.github_login_expected,l.code,sv.version_no desc`, group)
 	if e != nil {
 		return nil, e
 	}
@@ -102,7 +108,7 @@ func (r *CatalogRepository) GroupSubmissions(ctx context.Context, actor, group s
 	var out []GroupSubmission
 	for rows.Next() {
 		var v GroupSubmission
-		if e = rows.Scan(&v.ID, &v.LabID, &v.LabCode, &v.LabName, &v.VersionNumber, &v.CreatedAt, &v.StudentRecordID, &v.GitHubLogin); e != nil {
+		if e = rows.Scan(&v.ID, &v.LabID, &v.LabCode, &v.LabName, &v.VersionNumber, &v.VersionLabel, &v.Source, &v.SourceReference, &v.CommitSHA, &v.ApprovedBy, &v.DefenseStatus, &v.CreatedAt, &v.StudentRecordID, &v.GitHubLogin); e != nil {
 			return nil, e
 		}
 		out = append(out, v)
