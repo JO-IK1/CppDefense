@@ -89,3 +89,37 @@ func TestAnalyzeRejectsProjectWithoutCMake(t *testing.T) {
 		t.Fatal("project without CMake accepted")
 	}
 }
+
+func TestPrepareStudentArchiveAcceptsGitHubRootDirectory(t *testing.T) {
+	data := archive(t, map[string]string{
+		"labwork1-student-deadline_0/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)",
+		"labwork1-student-deadline_0/src/main.cpp":   "int main() { return 0; }",
+	})
+	canonical, analysis, err := PrepareStudentArchive(data, "labwork1-student-deadline_0.zip", "student", "26-013", DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical) == 0 || analysis.Manifest.LabCode != "labwork1" || analysis.Manifest.VersionLabel != "deadline_0" || len(analysis.Projects) != 1 {
+		t.Fatalf("unexpected analysis: %#v", analysis)
+	}
+}
+
+func TestPrepareStudentArchiveRequiresAuthenticatedLoginInFilename(t *testing.T) {
+	data := archive(t, map[string]string{
+		"CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)",
+		"main.cpp":       "int main() { return 0; }",
+	})
+	if _, _, err := PrepareStudentArchive(data, "labwork1-someone-else-deadline_0.zip", "student", "26-013", DefaultLimits()); err == nil {
+		t.Fatal("foreign GitHub login accepted")
+	}
+}
+
+func TestStudentArchiveNameNormalizesBrowserPath(t *testing.T) {
+	lab, version, err := studentArchiveName(`C:\\fakepath\\labwork1-Student-deadline_3.zip`, "student")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lab != "labwork1" || version != "deadline_3" {
+		t.Fatalf("archive metadata = %q, %q", lab, version)
+	}
+}

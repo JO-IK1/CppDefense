@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "organization": {
+    "github_login": "is-itmo-c-26",
+    "name": "ИС-26"
+  },
+  "groups": [
+    {
+      "code": "26-013",
+      "name": "26-013",
+      "students": [
+        {
+          "full_name": "Иванов Иван Иванович",
+          "github_login": "ivanov"
+        }
+      ]
+    }
+  ]
+}

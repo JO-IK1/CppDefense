@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"mime"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
 
 	"github.com/JO-IK1/CppDefense/backend/internal/application/audit"
@@ -20,6 +23,105 @@ type importHTTP struct {
 	files       appstorage.FileStorage
 	submissions *appstorage.SubmissionService
 	auth        *authHTTP
+}
+
+func (h *importHTTP) createStudent(w http.ResponseWriter, r *http.Request) {
+	s, a, c, ok := h.auth.authenticate(w, r)
+	if !ok || !h.auth.authorizeMutation(w, r, s, c) {
+		return
+	}
+	if !validIdempotencyKey(r) {
+		writeProblem(w, r, 400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key is required")
+		return
+	}
+	student, err := h.repository.StudentContext(r.Context(), a.ID)
+	if err != nil {
+		writeProblem(w, r, 403, "STUDENT_RECORD_REQUIRED", "Сначала преподаватель должен привязать аккаунт к записи студента")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 101<<20)
+	if err = r.ParseMultipartForm(101 << 20); err != nil {
+		writeProblem(w, r, 413, "ARCHIVE_TOO_LARGE", "Архив слишком большой")
+		return
+	}
+	file, header, err := r.FormFile("archive")
+	if err != nil {
+		writeProblem(w, r, 400, "ARCHIVE_REQUIRED", "Выберите ZIP-архив лабораторной")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 100<<20+1))
+	if err != nil || len(data) > 100<<20 {
+		writeProblem(w, r, 413, "ARCHIVE_TOO_LARGE", "Архив слишком большой")
+		return
+	}
+	canonical, analysis, err := importer.PrepareStudentArchive(data, header.Filename, student.GitHubLogin, student.GroupCode, importer.DefaultLimits())
+	if err != nil {
+		writeProblem(w, r, 422, "STUDENT_ARCHIVE_INVALID", err.Error())
+		return
+	}
+	object, err := appstorage.StoreOriginalArchive(r.Context(), h.files, int64(len(canonical)), bytes.NewReader(canonical))
+	if err != nil {
+		writeProblem(w, r, 503, "STORAGE_UNAVAILABLE", "Не удалось сохранить архив")
+		return
+	}
+	filename := path.Base(strings.ReplaceAll(strings.TrimSpace(header.Filename), "\\", "/"))
+	value, err := h.repository.CreateStudentReview(r.Context(), a.ID, filename, object, analysis)
+	if err != nil {
+		_ = h.files.Delete(r.Context(), object.Key)
+		if strings.Contains(err.Error(), "unknown lab") {
+			writeProblem(w, r, 422, "LAB_NOT_FOUND", "Лабораторная из имени архива не создана для вашей группы")
+			return
+		}
+		h.fail(w, r, err)
+		return
+	}
+	if err = h.auth.audit.Record(r.Context(), audit.Event{ActorID: &a.ID, ActorKind: "user", Action: "student.import.upload", TargetType: "import", TargetID: &value.ID, RequestID: RequestID(r.Context()), Metadata: map[string]any{"filename": filename}}); err != nil {
+		writeProblem(w, r, 500, "AUDIT_WRITE_FAILED", "Не удалось записать событие импорта")
+		return
+	}
+	writeJSON(w, 202, value)
+}
+
+func (h *importHTTP) listPending(w http.ResponseWriter, r *http.Request) {
+	_, a, _, ok := h.auth.authenticate(w, r)
+	if !ok {
+		return
+	}
+	groupID := r.URL.Query().Get("group_id")
+	if groupID != "" && !uuidPattern.MatchString(groupID) {
+		writeProblem(w, r, 400, "INVALID_GROUP_ID", "Group ID is invalid")
+		return
+	}
+	values, err := h.repository.ListReviewPending(r.Context(), a.ID, groupID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": values})
+}
+
+func (h *importHTTP) downloadOriginal(w http.ResponseWriter, r *http.Request) {
+	_, a, _, ok := h.auth.authenticate(w, r)
+	if !ok {
+		return
+	}
+	key, filename, err := h.repository.OriginalObject(r.Context(), a.ID, r.PathValue("import_id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	reader, object, err := h.files.Open(r.Context(), key)
+	if err != nil {
+		writeProblem(w, r, 503, "STORAGE_UNAVAILABLE", "Не удалось открыть архив")
+		return
+	}
+	defer reader.Close()
+	filename = path.Base(strings.ReplaceAll(strings.TrimSpace(filename), "\\", "/"))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	_, _ = io.Copy(w, reader)
 }
 
 func (h *importHTTP) create(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +290,7 @@ func (h *importHTTP) apply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uploaded = append(uploaded, key)
-		applyItems = append(applyItems, postgres.ApplyItem{ItemID: item, StudentRecordID: student, LabID: lab, ObjectKey: key, SHA256: object.SHA256, SourceManifestJSON: analysis.ManifestJSON})
+		applyItems = append(applyItems, postgres.ApplyItem{ItemID: item, StudentRecordID: student, LabID: lab, ObjectKey: key, SHA256: object.SHA256, SourceManifestJSON: analysis.ManifestJSON, VersionLabel: analysis.Manifest.VersionLabel, SourceReference: analysis.Manifest.SourceReference})
 	}
 	duplicates, e := h.repository.CommitApply(r.Context(), a.ID, source.Import.ID, applyItems)
 	if e != nil {

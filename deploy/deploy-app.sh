@@ -16,6 +16,15 @@ test -f "$worker_candidate"
 test ! -L "$worker_candidate"
 test -x "$worker_candidate"
 
+installer_source="$script_dir/install-runner-release.sh"
+installer_target=/usr/local/sbin/cppdefense-install-runner
+if ! cmp -s "$installer_source" "$installer_target"; then
+  printf 'runner installer on the VPS is outdated\n' >&2
+  printf 'run once: sudo install -o root -g root -m 0755 %s %s\n' \
+    "$installer_source" "$installer_target" >&2
+  exit 1
+fi
+
 /usr/local/bin/go \
   -C "$script_dir/../backend" \
   build \
@@ -42,12 +51,15 @@ compose build backend
 compose up -d --no-build --pull missing postgres minio backend caddy
 
 if ./healthcheck.sh; then
-  sudo -n /usr/local/sbin/cppdefense-install-runner
-  printf 'Deployment completed successfully\n'
-  exit 0
+  if sudo -n /usr/local/sbin/cppdefense-install-runner; then
+    printf 'Deployment completed successfully\n'
+    exit 0
+  fi
+  printf 'Runner deployment failed; restoring the previous backend image\n' >&2
+else
+  printf 'Deployment healthcheck failed; restoring the previous backend image\n' >&2
 fi
 
-printf 'Deployment healthcheck failed; restoring the previous backend image\n' >&2
 if docker image inspect "$rollback_image" >/dev/null 2>&1; then
   docker image tag "$rollback_image" cppdefense-backend:local
   compose up -d --no-build --pull never --force-recreate backend caddy
