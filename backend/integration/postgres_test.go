@@ -284,6 +284,7 @@ func TestTeacherGitHubImportUsesSiteGroupAndPersistsCommit(t *testing.T) {
 	token := strings.ReplaceAll(suffix, "-", "")[:16]
 	organizationID, _ := domain.NewUUIDv7()
 	teacherID, _ := domain.NewUUIDv7()
+	teacherIdentityID, _ := domain.NewUUIDv7()
 	groupID, _ := domain.NewUUIDv7()
 	recordID, _ := domain.NewUUIDv7()
 	labID, _ := domain.NewUUIDv7()
@@ -297,6 +298,9 @@ func TestTeacherGitHubImportUsesSiteGroupAndPersistsCommit(t *testing.T) {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	if _, err = tx.Exec(ctx, `insert into users(id,status,role) values($1,'active','teacher')`, teacherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `insert into github_identities(id,user_id,github_user_id,login,verified_at) values($1,$2,$3,$4,clock_timestamp())`, teacherIdentityID, teacherID, time.Now().UnixNano(), "teacher-"+token); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, `insert into organizations(id,github_login,name) values($1,$2,'GitHub import organization')`, organizationID, organizationLogin); err != nil {
