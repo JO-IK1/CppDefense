@@ -102,6 +102,16 @@ func TestReadinessFailureUsesProblemDetails(t *testing.T) {
 	}
 }
 
+func TestSecurityPolicyAllowsOnlyGitHubImportConnections(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	response := httptest.NewRecorder()
+	handler(func(context.Context) error { return nil }).ServeHTTP(response, request)
+	policy := response.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "connect-src 'self' https://api.github.com https://codeload.github.com") {
+		t.Fatalf("content security policy does not allow the GitHub importer: %q", policy)
+	}
+}
+
 func TestInvalidRequestIDIsReplaced(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/health/live", nil)
 	request.Header.Set("X-Request-ID", "attacker-controlled")

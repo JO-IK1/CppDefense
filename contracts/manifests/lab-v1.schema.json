@@ -43,6 +43,10 @@
       "minLength": 1,
       "maxLength": 255
     },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    },
     "time_limit": {
       "type": "integer",
       "minimum": 1,

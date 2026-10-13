@@ -25,6 +25,93 @@ type importHTTP struct {
 	auth        *authHTTP
 }
 
+func (h *importHTTP) githubContext(w http.ResponseWriter, r *http.Request) {
+	_, actor, _, ok := h.auth.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if actor.Role == nil || (*actor.Role != "teacher" && *actor.Role != "admin") {
+		writeProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Импорт из GitHub доступен преподавателю и администратору")
+		return
+	}
+	value, err := h.repository.GitHubImportContext(r.Context(), actor.ID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+
+func (h *importHTTP) createGitHub(w http.ResponseWriter, r *http.Request) {
+	session, actor, claims, ok := h.auth.authenticate(w, r)
+	if !ok || !h.auth.authorizeMutation(w, r, session, claims) {
+		return
+	}
+	if actor.Role == nil || (*actor.Role != "teacher" && *actor.Role != "admin") {
+		writeProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Импорт из GitHub доступен преподавателю и администратору")
+		return
+	}
+	if !validIdempotencyKey(r) {
+		writeProblem(w, r, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key is required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 101<<20)
+	if err := r.ParseMultipartForm(101 << 20); err != nil {
+		writeProblem(w, r, http.StatusRequestEntityTooLarge, "ARCHIVE_TOO_LARGE", "Архив слишком большой")
+		return
+	}
+	groupID := strings.TrimSpace(r.FormValue("group_id"))
+	githubLogin := strings.ToLower(strings.TrimSpace(r.FormValue("github_login")))
+	labCode := strings.ToLower(strings.TrimSpace(r.FormValue("lab_code")))
+	versionLabel := strings.ToLower(strings.TrimSpace(r.FormValue("version_label")))
+	repositoryFullName := strings.TrimSpace(r.FormValue("repository_full_name"))
+	commitSHA := strings.ToLower(strings.TrimSpace(r.FormValue("commit_sha")))
+	if !uuidPattern.MatchString(groupID) {
+		writeProblem(w, r, http.StatusBadRequest, "INVALID_GROUP_ID", "Выберите группу")
+		return
+	}
+	file, _, err := r.FormFile("archive")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "ARCHIVE_REQUIRED", "Не удалось получить ZIP из GitHub")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 100<<20+1))
+	if err != nil || len(data) > 100<<20 {
+		writeProblem(w, r, http.StatusRequestEntityTooLarge, "ARCHIVE_TOO_LARGE", "Архив слишком большой")
+		return
+	}
+	sourceReference := "https://github.com/" + repositoryFullName + "/tree/" + commitSHA
+	canonical, analysis, err := importer.PrepareGitHubArchive(data, importer.ProjectArchiveMetadata{
+		GroupCode:       strings.ToLower(strings.TrimSpace(r.FormValue("group_code"))),
+		LabCode:         labCode,
+		GitHubLogin:     githubLogin,
+		VersionLabel:    versionLabel,
+		SourceReference: sourceReference,
+		CommitSHA:       commitSHA,
+	}, importer.DefaultLimits())
+	if err != nil {
+		writeProblem(w, r, http.StatusUnprocessableEntity, "GITHUB_ARCHIVE_INVALID", err.Error())
+		return
+	}
+	object, err := appstorage.StoreOriginalArchive(r.Context(), h.files, int64(len(canonical)), bytes.NewReader(canonical))
+	if err != nil {
+		writeProblem(w, r, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", "Не удалось сохранить архив")
+		return
+	}
+	value, err := h.repository.CreateGitHubReview(r.Context(), actor.ID, groupID, repositoryFullName, object, analysis)
+	if err != nil {
+		_ = h.files.Delete(r.Context(), object.Key)
+		h.fail(w, r, err)
+		return
+	}
+	if err = h.auth.audit.Record(r.Context(), audit.Event{ActorID: &actor.ID, ActorKind: "user", Action: "teacher.github_import.upload", TargetType: "import", TargetID: &value.ID, RequestID: RequestID(r.Context()), Metadata: map[string]any{"repository": repositoryFullName, "commit_sha": commitSHA, "version": versionLabel}}); err != nil {
+		writeProblem(w, r, http.StatusInternalServerError, "AUDIT_WRITE_FAILED", "Не удалось записать событие импорта")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, value)
+}
+
 func (h *importHTTP) createStudent(w http.ResponseWriter, r *http.Request) {
 	s, a, c, ok := h.auth.authenticate(w, r)
 	if !ok || !h.auth.authorizeMutation(w, r, s, c) {
@@ -290,7 +377,7 @@ func (h *importHTTP) apply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uploaded = append(uploaded, key)
-		applyItems = append(applyItems, postgres.ApplyItem{ItemID: item, StudentRecordID: student, LabID: lab, ObjectKey: key, SHA256: object.SHA256, SourceManifestJSON: analysis.ManifestJSON, VersionLabel: analysis.Manifest.VersionLabel, SourceReference: analysis.Manifest.SourceReference})
+		applyItems = append(applyItems, postgres.ApplyItem{ItemID: item, StudentRecordID: student, LabID: lab, ObjectKey: key, SHA256: object.SHA256, SourceManifestJSON: analysis.ManifestJSON, VersionLabel: analysis.Manifest.VersionLabel, SourceReference: analysis.Manifest.SourceReference, CommitSHA: analysis.Manifest.CommitSHA})
 	}
 	duplicates, e := h.repository.CommitApply(r.Context(), a.ID, source.Import.ID, applyItems)
 	if e != nil {

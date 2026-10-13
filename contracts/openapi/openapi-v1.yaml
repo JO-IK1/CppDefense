@@ -366,6 +366,62 @@ paths:
               schema: { $ref: '#/components/schemas/Import' }
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/teacher/github-imports/context:
+    get:
+      tags: [Imports]
+      operationId: getTeacherGitHubImportContext
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Site groups, students, labs, and their GitHub organization used to derive expected repositories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitHubImportContext'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/teacher/github-imports:
+    post:
+      tags: [Imports]
+      operationId: createTeacherGitHubImport
+      x-roles: [teacher, admin]
+      description: The browser downloads the archive directly from GitHub. The personal token is never part of this request.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [group_id, group_code, github_login, lab_code, version_label, repository_full_name, commit_sha, archive]
+              properties:
+                group_id: { $ref: '#/components/schemas/Uuid' }
+                group_code: { $ref: '#/components/schemas/Code' }
+                github_login: { type: string }
+                lab_code: { $ref: '#/components/schemas/Code' }
+                version_label: { type: string, pattern: '^deadline_[0-9]+$' }
+                repository_full_name: { type: string, pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' }
+                commit_sha: { type: string, pattern: '^[0-9a-f]{40}([0-9a-f]{24})?$' }
+                archive: { type: string, format: binary }
+      responses:
+        '202':
+          description: GitHub archive validated and queued for the normal teacher review
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Import' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /api/v1/imports/{import_id}:
     get:
       tags: [Imports]
@@ -1552,6 +1608,41 @@ components:
             students_created: { type: integer, minimum: 0 }
             students_updated: { type: integer, minimum: 0 }
             unchanged: { type: integer, minimum: 0 }
+    GitHubImportContext:
+      type: object
+      additionalProperties: false
+      required: [groups]
+      properties:
+        groups:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, code, name, organization_login, organization_name, students, labs]
+            properties:
+              id: { $ref: '#/components/schemas/Uuid' }
+              code: { $ref: '#/components/schemas/Code' }
+              name: { type: string }
+              organization_login: { type: string }
+              organization_name: { type: string }
+              students:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [github_login, full_name]
+                  properties:
+                    github_login: { type: string }
+                    full_name: { type: string }
+              labs:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [code, name]
+                  properties:
+                    code: { $ref: '#/components/schemas/Code' }
+                    name: { type: string }
     ImportState:
       enum: [receiving, stored, validating, review_pending, approved, applying, completed, rejected, failed, cancelled]
     Import:

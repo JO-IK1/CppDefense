@@ -13,7 +13,20 @@ import (
 	"strings"
 )
 
-var deadlinePattern = regexp.MustCompile(`^deadline_[0-9]+$`)
+var (
+	deadlinePattern  = regexp.MustCompile(`^deadline_[0-9]+$`)
+	commitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}(?:[0-9a-f]{24})?$`)
+)
+
+type ProjectArchiveMetadata struct {
+	GroupCode       string
+	LabCode         string
+	GitHubLogin     string
+	VersionLabel    string
+	Source          string
+	SourceReference string
+	CommitSHA       string
+}
 
 // PrepareStudentArchive accepts an ordinary GitHub/project ZIP, infers its
 // metadata from the authenticated account and filename, and converts it to the
@@ -23,8 +36,42 @@ func PrepareStudentArchive(data []byte, filename, githubLogin, groupCode string,
 	if err != nil {
 		return nil, Analysis{}, err
 	}
-	if !validCode(groupCode) {
+	return prepareProjectArchive(data, ProjectArchiveMetadata{
+		GroupCode:       groupCode,
+		LabCode:         labCode,
+		GitHubLogin:     githubLogin,
+		VersionLabel:    versionLabel,
+		Source:          "student_zip",
+		SourceReference: path.Base(filename),
+	}, limits)
+}
+
+// PrepareGitHubArchive converts a GitHub repository zipball downloaded in the
+// teacher's browser into the same canonical archive used by every other import.
+// The access token is deliberately not part of this API or its metadata.
+func PrepareGitHubArchive(data []byte, metadata ProjectArchiveMetadata, limits Limits) ([]byte, Analysis, error) {
+	metadata.Source = "teacher_import"
+	return prepareProjectArchive(data, metadata, limits)
+}
+
+func prepareProjectArchive(data []byte, metadata ProjectArchiveMetadata, limits Limits) ([]byte, Analysis, error) {
+	if !validCode(metadata.GroupCode) {
 		return nil, Analysis{}, errors.New("для аккаунта не найдена корректная учебная группа")
+	}
+	if !validCode(metadata.LabCode) || !deadlinePattern.MatchString(metadata.VersionLabel) {
+		return nil, Analysis{}, errors.New("некорректны код лабораторной или ветка deadline_X")
+	}
+	if strings.TrimSpace(metadata.GitHubLogin) == "" || len(metadata.GitHubLogin) > 100 {
+		return nil, Analysis{}, errors.New("некорректный GitHub-логин студента")
+	}
+	if metadata.Source != "student_zip" && metadata.Source != "teacher_import" {
+		return nil, Analysis{}, errors.New("некорректный источник архива")
+	}
+	if len(metadata.SourceReference) == 0 || len(metadata.SourceReference) > 255 || strings.ContainsAny(metadata.SourceReference, "\x00\r\n") {
+		return nil, Analysis{}, errors.New("некорректная ссылка на источник")
+	}
+	if metadata.CommitSHA != "" && !commitSHAPattern.MatchString(metadata.CommitSHA) {
+		return nil, Analysis{}, errors.New("некорректный SHA коммита")
 	}
 	if int64(len(data)) > limits.MaxCompressedBytes {
 		return nil, Analysis{}, errors.New("архив превышает допустимый сжатый размер")
@@ -92,13 +139,14 @@ func PrepareStudentArchive(data []byte, filename, githubLogin, groupCode string,
 	manifest := Manifest{
 		SchemaVersion:   1,
 		Kind:            "lab",
-		GroupCode:       groupCode,
-		LabCode:         labCode,
-		Student:         Student{GitHubLogin: githubLogin},
+		GroupCode:       metadata.GroupCode,
+		LabCode:         metadata.LabCode,
+		Student:         Student{GitHubLogin: metadata.GitHubLogin},
 		ProjectPath:     "project",
-		VersionLabel:    versionLabel,
-		Source:          "student_zip",
-		SourceReference: path.Base(filename),
+		VersionLabel:    metadata.VersionLabel,
+		Source:          metadata.Source,
+		SourceReference: metadata.SourceReference,
+		CommitSHA:       metadata.CommitSHA,
 	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {

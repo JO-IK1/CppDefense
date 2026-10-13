@@ -37,6 +37,7 @@ type Manifest struct {
 	VersionLabel    string  `json:"version_label,omitempty"`
 	Source          string  `json:"source,omitempty"`
 	SourceReference string  `json:"source_reference,omitempty"`
+	CommitSHA       string  `json:"commit_sha,omitempty"`
 	// Deprecated compatibility fields. Defense settings are chosen by the
 	// teacher and these values are deliberately ignored.
 	TimeLimitSeconds           *int   `json:"time_limit,omitempty"`

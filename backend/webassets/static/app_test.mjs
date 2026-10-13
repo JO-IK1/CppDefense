@@ -98,3 +98,20 @@ test("C++ highlighter marks repeated occurrences of the selected identifier", ()
   assert.equal((highlighted.match(/class="syntax-match"/g) || []).length, 2);
   assert.doesNotMatch(highlighted, /syntax-match[^>]*>int</);
 });
+
+test("GitHub importer derives a repository from the site group metadata", () => {
+  const context = browserContext(null);
+  const repository = vm.runInContext(`${source}\nexpectedGitHubRepository({ organization_login: "is-itmo-c-26" }, "student-one", "labwork1");`, context);
+  assert.equal(repository, "is-itmo-c-26/labwork1-student-one");
+});
+
+test("GitHub importer accepts only deadline branches with immutable commit SHAs", () => {
+  const context = browserContext(null);
+  const names = vm.runInContext(`${source}\ngithubDeadlineBranches([
+    { name: "deadline_2", commit: { sha: "2222222222222222222222222222222222222222" } },
+    { name: "main", commit: { sha: "1111111111111111111111111111111111111111" } },
+    { name: "deadline_0", commit: { sha: "0000000000000000000000000000000000000000" } },
+    { name: "deadline_1", commit: { sha: "invalid" } }
+  ]).map(branch => branch.name).join(",");`, context);
+  assert.equal(names, "deadline_0,deadline_2");
+});
