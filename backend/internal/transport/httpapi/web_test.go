@@ -71,3 +71,22 @@ func TestTeacherConfiguresEveryDefenseInsteadOfLaboratoryDefaults(t *testing.T) 
 		t.Fatal("laboratory form still contains defense settings")
 	}
 }
+
+func TestTeacherPageExplainsLocalGitHubTokenHandling(t *testing.T) {
+	templates, err := template.ParseFS(webassets.Files, "templates/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := "teacher"
+	page := appPage{User: appauth.User{Status: "active", Role: &role}, Role: role}
+	var output bytes.Buffer
+	if err := templates.ExecuteTemplate(&output, "app.html", page); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	for _, expected := range []string{`id="github-import-form"`, `name="github_token" type="password"`, `id="github-forget-token"`, `Токен используется только браузером`} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("GitHub importer is missing %s", expected)
+		}
+	}
+}

@@ -43,6 +43,106 @@ type ImportItem struct {
 	SubmissionVersionID *string `json:"submission_version_id"`
 }
 
+type GitHubImportContext struct {
+	Groups []GitHubImportGroup `json:"groups"`
+}
+
+type GitHubImportGroup struct {
+	ID                string                `json:"id"`
+	Code              string                `json:"code"`
+	Name              string                `json:"name"`
+	OrganizationLogin string                `json:"organization_login"`
+	OrganizationName  string                `json:"organization_name"`
+	Students          []GitHubImportStudent `json:"students"`
+	Labs              []GitHubImportLab     `json:"labs"`
+}
+
+type GitHubImportStudent struct {
+	GitHubLogin string `json:"github_login"`
+	FullName    string `json:"full_name"`
+}
+
+type GitHubImportLab struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+func (r *ImportRepository) GitHubImportContext(ctx context.Context, actor string) (GitHubImportContext, error) {
+	rows, err := r.db.pool.Query(ctx, `
+		select g.id,g.code::text,g.name,o.github_login::text,o.name
+		from groups g
+		join organizations o on o.id=g.organization_id
+		join users u on u.id=$1 and u.status='active'
+		where g.status='active' and (u.role='admin' or (u.role='teacher' and exists(
+			select 1 from group_teachers gt where gt.group_id=g.id and gt.teacher_user_id=u.id
+		)))
+		order by o.github_login,g.code
+	`, actor)
+	if err != nil {
+		return GitHubImportContext{}, err
+	}
+	defer rows.Close()
+	value := GitHubImportContext{Groups: []GitHubImportGroup{}}
+	for rows.Next() {
+		var group GitHubImportGroup
+		if err = rows.Scan(&group.ID, &group.Code, &group.Name, &group.OrganizationLogin, &group.OrganizationName); err != nil {
+			return GitHubImportContext{}, err
+		}
+		group.Students = []GitHubImportStudent{}
+		group.Labs = []GitHubImportLab{}
+		value.Groups = append(value.Groups, group)
+	}
+	if err = rows.Err(); err != nil {
+		return GitHubImportContext{}, err
+	}
+	if len(value.Groups) == 0 {
+		return value, nil
+	}
+	for index := range value.Groups {
+		group := &value.Groups[index]
+		studentRows, queryErr := r.db.pool.Query(ctx, `
+			select github_login_expected::text,coalesce(full_name,'')
+			from student_records
+			where group_id=$1 and status<>'archived'
+			order by coalesce(nullif(full_name,''),github_login_expected::text),github_login_expected
+		`, group.ID)
+		if queryErr != nil {
+			return GitHubImportContext{}, queryErr
+		}
+		for studentRows.Next() {
+			var student GitHubImportStudent
+			if queryErr = studentRows.Scan(&student.GitHubLogin, &student.FullName); queryErr != nil {
+				studentRows.Close()
+				return GitHubImportContext{}, queryErr
+			}
+			group.Students = append(group.Students, student)
+		}
+		queryErr = studentRows.Err()
+		studentRows.Close()
+		if queryErr != nil {
+			return GitHubImportContext{}, queryErr
+		}
+		labRows, queryErr := r.db.pool.Query(ctx, `select code::text,name from labs where group_id=$1 and status='active' order by code`, group.ID)
+		if queryErr != nil {
+			return GitHubImportContext{}, queryErr
+		}
+		for labRows.Next() {
+			var lab GitHubImportLab
+			if queryErr = labRows.Scan(&lab.Code, &lab.Name); queryErr != nil {
+				labRows.Close()
+				return GitHubImportContext{}, queryErr
+			}
+			group.Labs = append(group.Labs, lab)
+		}
+		queryErr = labRows.Err()
+		labRows.Close()
+		if queryErr != nil {
+			return GitHubImportContext{}, queryErr
+		}
+	}
+	return value, nil
+}
+
 func (r *ImportRepository) CreateReview(ctx context.Context, actor, groupID, kind string, object appstorage.Object, analysis importer.Analysis) (Import, error) {
 	tx, e := r.db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if e != nil {
@@ -175,6 +275,69 @@ func (r *ImportRepository) CreateStudentReview(ctx context.Context, actor, filen
 	return r.Get(ctx, actor, importID)
 }
 
+func (r *ImportRepository) CreateGitHubReview(ctx context.Context, actor, groupID, repositoryFullName string, object appstorage.Object, analysis importer.Analysis) (Import, error) {
+	if len(analysis.Projects) != 1 || analysis.Manifest.Source != "teacher_import" || analysis.Manifest.CommitSHA == "" {
+		return Import{}, fmt.Errorf("github archive metadata mismatch")
+	}
+	tx, err := r.db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return Import{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var groupCode, organizationLogin string
+	var allowed bool
+	err = tx.QueryRow(ctx, `
+		select g.code::text,o.github_login::text,exists(
+			select 1 from users u where u.id=$1 and u.status='active' and (
+				u.role='admin' or (u.role='teacher' and exists(
+					select 1 from group_teachers gt where gt.group_id=g.id and gt.teacher_user_id=u.id
+				))
+			)
+		)
+		from groups g join organizations o on o.id=g.organization_id
+		where g.id=$2 and g.status='active'
+		for update of g
+	`, actor, groupID).Scan(&groupCode, &organizationLogin, &allowed)
+	if err != nil || !allowed {
+		return Import{}, appauth.ErrForbidden
+	}
+	login := strings.ToLower(strings.TrimSpace(analysis.Manifest.Student.GitHubLogin))
+	labCode := strings.ToLower(strings.TrimSpace(analysis.Manifest.LabCode))
+	expectedRepository := organizationLogin + "/" + labCode + "-" + login
+	if !strings.EqualFold(groupCode, analysis.Manifest.GroupCode) || !strings.EqualFold(repositoryFullName, expectedRepository) {
+		return Import{}, fmt.Errorf("github repository identity mismatch")
+	}
+	var studentID, labID string
+	if err = tx.QueryRow(ctx, `select id from student_records where group_id=$1 and github_login_expected=$2 and status<>'archived'`, groupID, login).Scan(&studentID); err != nil {
+		return Import{}, fmt.Errorf("unknown student %s", login)
+	}
+	if err = tx.QueryRow(ctx, `select id from labs where group_id=$1 and code=$2 and status='active'`, groupID, labCode).Scan(&labID); err != nil {
+		return Import{}, fmt.Errorf("unknown lab %s", labCode)
+	}
+	importID, err := domain.NewUUIDv7()
+	if err != nil {
+		return Import{}, err
+	}
+	filename := labCode + "-" + login + "-" + analysis.Manifest.VersionLabel + ".zip"
+	_, err = tx.Exec(ctx, `insert into imports(id,group_id,kind,state,uploaded_by,original_object_key,original_sha256,compressed_size,uncompressed_size,schema_version,original_filename) values($1,$2,'lab','review_pending',$3,$4,$5,$6,$7,1,$8)`, importID, groupID, actor, object.Key.String(), object.SHA256[:], object.Size, analysis.TotalSize, filename)
+	if err != nil {
+		return Import{}, err
+	}
+	itemID, err := domain.NewUUIDv7()
+	if err != nil {
+		return Import{}, err
+	}
+	project := analysis.Projects[0]
+	_, err = tx.Exec(ctx, `insert into import_items(id,import_id,student_record_id,lab_id,github_login_input,project_path,action,file_count,uncompressed_size) values($1,$2,$3,$4,$5,$6,'create_version',$7,$8)`, itemID, importID, studentID, labID, login, project.Item.ProjectPath, project.FileCount, project.Size)
+	if err != nil {
+		return Import{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Import{}, err
+	}
+	return r.Get(ctx, actor, importID)
+}
+
 func (r *ImportRepository) Get(ctx context.Context, actor, id string) (Import, error) {
 	var v Import
 	var digest []byte
@@ -290,6 +453,7 @@ type ApplyItem struct {
 	SourceManifestJSON []byte
 	VersionLabel       string
 	SourceReference    string
+	CommitSHA          string
 }
 
 func (r *ImportRepository) CommitApply(ctx context.Context, actor, importID string, items []ApplyItem) ([]appstorage.Key, error) {
@@ -344,7 +508,7 @@ func (r *ImportRepository) CommitApply(ctx context.Context, actor, importID stri
 			if reference == "" {
 				reference = originalFilename
 			}
-			_, e = tx.Exec(ctx, `insert into submission_versions(id,student_record_id,lab_id,version_no,source,original_import_id,normalized_object_key,normalized_sha256,source_manifest,created_by,version_label,source_reference,approved_by)values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)`, versionID, item.StudentRecordID, item.LabID, versionNumber, source, importID, item.ObjectKey.String(), item.SHA256[:], string(item.SourceManifestJSON), actor, label, nullableString(reference), reviewedBy)
+			_, e = tx.Exec(ctx, `insert into submission_versions(id,student_record_id,lab_id,version_no,source,original_import_id,normalized_object_key,normalized_sha256,source_manifest,created_by,version_label,source_reference,commit_sha,approved_by)values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)`, versionID, item.StudentRecordID, item.LabID, versionNumber, source, importID, item.ObjectKey.String(), item.SHA256[:], string(item.SourceManifestJSON), actor, label, nullableString(reference), nullableString(item.CommitSHA), reviewedBy)
 			if e != nil {
 				return nil, e
 			}

@@ -114,6 +114,46 @@ func TestPrepareStudentArchiveRequiresAuthenticatedLoginInFilename(t *testing.T)
 	}
 }
 
+func TestPrepareGitHubArchivePreservesVerifiedSourceMetadata(t *testing.T) {
+	data := archive(t, map[string]string{
+		"is-itmo-c-26-labwork1-student-deadbeef/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)",
+		"is-itmo-c-26-labwork1-student-deadbeef/src/main.cpp":   "int main() { return 0; }",
+	})
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	_, analysis, err := PrepareGitHubArchive(data, ProjectArchiveMetadata{
+		GroupCode:       "26-013",
+		LabCode:         "labwork1",
+		GitHubLogin:     "student",
+		VersionLabel:    "deadline_0",
+		SourceReference: "https://github.com/is-itmo-c-26/labwork1-student/tree/" + sha,
+		CommitSHA:       sha,
+	}, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Manifest.Source != "teacher_import" || analysis.Manifest.CommitSHA != sha || analysis.Manifest.VersionLabel != "deadline_0" {
+		t.Fatalf("unexpected manifest: %#v", analysis.Manifest)
+	}
+}
+
+func TestPrepareGitHubArchiveRejectsInvalidCommitSHA(t *testing.T) {
+	data := archive(t, map[string]string{
+		"CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)",
+		"main.cpp":       "int main() { return 0; }",
+	})
+	_, _, err := PrepareGitHubArchive(data, ProjectArchiveMetadata{
+		GroupCode:       "26-013",
+		LabCode:         "labwork1",
+		GitHubLogin:     "student",
+		VersionLabel:    "deadline_0",
+		SourceReference: "https://github.com/is-itmo-c-26/labwork1-student/tree/not-a-sha",
+		CommitSHA:       "not-a-sha",
+	}, DefaultLimits())
+	if err == nil {
+		t.Fatal("invalid commit SHA accepted")
+	}
+}
+
 func TestStudentArchiveNameNormalizesBrowserPath(t *testing.T) {
 	lab, version, err := studentArchiveName(`C:\\fakepath\\labwork1-Student-deadline_3.zip`, "student")
 	if err != nil {

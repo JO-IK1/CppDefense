@@ -277,6 +277,124 @@ func TestStudentZIPRequiresTeacherApprovalBeforeCreatingVersion(t *testing.T) {
 	}
 }
 
+func TestTeacherGitHubImportUsesSiteGroupAndPersistsCommit(t *testing.T) {
+	db := database(t)
+	ctx := context.Background()
+	suffix, _ := domain.NewUUIDv7()
+	token := strings.ReplaceAll(suffix, "-", "")[:16]
+	organizationID, _ := domain.NewUUIDv7()
+	teacherID, _ := domain.NewUUIDv7()
+	teacherIdentityID, _ := domain.NewUUIDv7()
+	groupID, _ := domain.NewUUIDv7()
+	recordID, _ := domain.NewUUIDv7()
+	labID, _ := domain.NewUUIDv7()
+	organizationLogin := "org-" + token
+	groupCode := "group-" + token
+	studentLogin := "student-" + token
+
+	tx, err := db.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err = tx.Exec(ctx, `insert into users(id,status,role) values($1,'active','teacher')`, teacherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `insert into github_identities(id,user_id,github_user_id,login,verified_at) values($1,$2,$3,$4,clock_timestamp())`, teacherIdentityID, teacherID, time.Now().UnixNano(), "teacher-"+token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `insert into organizations(id,github_login,name) values($1,$2,'GitHub import organization')`, organizationID, organizationLogin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `insert into groups(id,code,name,organization_id) values($1,$2,'GitHub import group',$3)`, groupID, groupCode, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `insert into group_teachers(group_id,teacher_user_id,assigned_by) values($1,$2,$2)`, groupID, teacherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `insert into student_records(id,group_id,github_login_expected,full_name,created_source) values($1,$2,$3,'Student Name','group_import')`, recordID, groupID, studentLogin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `insert into labs(id,group_id,code,name,time_limit_seconds,top_n) values($1,$2,'labwork1','Labwork 1',900,5)`, labID, groupID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := postgres.NewImportRepository(db)
+	contextValue, err := repository.GitHubImportContext(ctx, teacherID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var managed *postgres.GitHubImportGroup
+	for index := range contextValue.Groups {
+		if contextValue.Groups[index].ID == groupID {
+			managed = &contextValue.Groups[index]
+			break
+		}
+	}
+	if managed == nil || managed.OrganizationLogin != organizationLogin || len(managed.Students) != 1 || len(managed.Labs) != 1 {
+		t.Fatalf("unexpected GitHub import context: %#v", contextValue)
+	}
+
+	commitSHA := "0123456789abcdef0123456789abcdef01234567"
+	repositoryName := organizationLogin + "/labwork1-" + studentLogin
+	manifestJSON := []byte(`{"schema_version":1,"kind":"lab","group_code":"` + groupCode + `","lab_code":"labwork1","student":{"github_login":"` + studentLogin + `"},"project_path":"project","version_label":"deadline_0","source":"teacher_import","source_reference":"https://github.com/` + repositoryName + `/tree/` + commitSHA + `","commit_sha":"` + commitSHA + `"}`)
+	analysis := importer.Analysis{
+		Manifest: importer.Manifest{
+			SchemaVersion: 1, Kind: "lab", GroupCode: groupCode, LabCode: "labwork1",
+			Student: importer.Student{GitHubLogin: studentLogin}, ProjectPath: "project",
+			VersionLabel: "deadline_0", Source: "teacher_import",
+			SourceReference: "https://github.com/" + repositoryName + "/tree/" + commitSHA,
+			CommitSHA:       commitSHA,
+		},
+		ManifestJSON: manifestJSON,
+		Projects: []importer.Project{{
+			Item:      importer.Item{LabCode: "labwork1", Student: importer.Student{GitHubLogin: studentLogin}, ProjectPath: "project"},
+			FileCount: 2,
+			Size:      128,
+		}},
+		TotalSize: 128,
+	}
+	objectID, _ := domain.NewUUIDv7()
+	originalKey, _ := appstorage.NewKey(appstorage.OriginalArchives, objectID, ".zip")
+	originalDigest := sha256.Sum256([]byte("github archive"))
+	created, err := repository.CreateGitHubReview(ctx, teacherID, groupID, repositoryName, appstorage.Object{Key: originalKey, Size: 256, SHA256: originalDigest}, analysis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.State != "review_pending" || len(created.Items) != 1 {
+		t.Fatalf("unexpected pending import: %#v", created)
+	}
+	if _, err = repository.CreateGitHubReview(ctx, teacherID, groupID, organizationLogin+"/labwork1-someone-else", appstorage.Object{Key: originalKey, Size: 256, SHA256: originalDigest}, analysis); err == nil {
+		t.Fatal("mismatched repository was accepted")
+	}
+	if _, err = repository.Review(ctx, teacherID, created.ID, "approve", hex.EncodeToString(originalDigest[:]), map[string]any{"paths_checked": true, "ownership_checked": true}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repository.BeginApply(ctx, teacherID, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	normalizedID, _ := domain.NewUUIDv7()
+	normalizedKey, _ := appstorage.NewKey(appstorage.NormalizedSubmissions, normalizedID, ".zip")
+	normalizedDigest := sha256.Sum256([]byte("normalized github archive"))
+	if _, err = repository.CommitApply(ctx, teacherID, created.ID, []postgres.ApplyItem{{
+		ItemID: created.Items[0].ID, StudentRecordID: recordID, LabID: labID,
+		ObjectKey: normalizedKey, SHA256: normalizedDigest, SourceManifestJSON: manifestJSON,
+		VersionLabel: "deadline_0", SourceReference: analysis.Manifest.SourceReference, CommitSHA: commitSHA,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var source, storedCommit string
+	if err = db.Pool().QueryRow(ctx, `select source::text,commit_sha from submission_versions where student_record_id=$1 and lab_id=$2`, recordID, labID).Scan(&source, &storedCommit); err != nil {
+		t.Fatal(err)
+	}
+	if source != "teacher_import" || storedCommit != commitSHA {
+		t.Fatalf("unexpected GitHub version metadata: source=%q commit=%q", source, storedCommit)
+	}
+}
+
 func TestIdentityUniquenessAndStateTransition(t *testing.T) {
 	db := database(t)
 	ctx := context.Background()

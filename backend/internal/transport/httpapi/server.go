@@ -72,6 +72,8 @@ func New(dependencies Dependencies) http.Handler {
 		importHandler := &importHTTP{repository: dependencies.Imports, files: dependencies.Files, submissions: dependencies.Submissions, auth: authHandler}
 		mux.HandleFunc("POST /api/v1/imports", importHandler.create)
 		mux.HandleFunc("POST /api/v1/student/imports", importHandler.createStudent)
+		mux.HandleFunc("GET /api/v1/teacher/github-imports/context", importHandler.githubContext)
+		mux.HandleFunc("POST /api/v1/teacher/github-imports", importHandler.createGitHub)
 		mux.HandleFunc("GET /api/v1/imports", importHandler.listPending)
 		mux.HandleFunc("GET /api/v1/imports/{import_id}/archive", importHandler.downloadOriginal)
 		mux.HandleFunc("GET /api/v1/imports/{import_id}", importHandler.get)
