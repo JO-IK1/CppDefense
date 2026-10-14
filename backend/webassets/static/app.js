@@ -1213,6 +1213,9 @@ async function loadPendingImports() {
     card.append(node("strong", "", item.original_filename || `Импорт ${item.id}`));
     card.append(node("span", "", `@${first.github_login || "—"} · ${first.file_count || 0} файлов · SHA-256 ${item.original_sha256.slice(0, 12)}…`));
     const actions = node("div", "lab-row-actions");
+    const preview = node("a", "secondary-button", "Скачать ZIP");
+    preview.href = `/api/v1/imports/${item.id}/archive`;
+    preview.download = item.original_filename || "archive.zip";
     const approve = node("button", "", "Подтвердить версию");
     approve.type = "button";
     approve.onclick = async () => {
