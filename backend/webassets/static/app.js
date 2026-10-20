@@ -190,59 +190,56 @@ async function initializeGitHubImport() {
   const form = document.querySelector("#github-import-form");
   if (!form) return;
   const result = document.querySelector("#github-import-result");
-  const student = form.elements.github_login;
-  const lab = form.elements.lab_code;
-  const groupSelect = form.elements.group_id;
-  const group = () => githubImportGroups.find(item => item.id === groupSelect.value);
-  const refresh = () => {
-    const repository = expectedGitHubRepository(group(), student.value, lab.value);
-    document.querySelector("#github-repository-name").textContent = repository || "—";
-    document.querySelector("#github-clone-command").textContent = repository
-      ? `python3 deploy/clone-lab.py ${repository} deadline_0 --output ./lab-export`
-      : "Выберите группу, студента и лабораторную";
-  };
+  const students = form.elements.github_login;
+  const labs = form.elements.lab_code;
+  const groups = form.elements.group_id;
+  const command = document.querySelector("#github-clone-command");
+  const copy = document.querySelector("#copy-import-command");
+  let refreshTimer;
   try {
     const value = await api("/api/v1/teacher/github-imports/context");
     githubImportGroups = value.groups || [];
-    fillSelect(groupSelect, "Выберите группу", githubImportGroups, item => item.id, item => `${item.code} · ${item.name}`);
+    fillSelect(groups, "Выберите группу", githubImportGroups, item => item.id, item => `${item.code} · ${item.name}`);
   } catch (error) { renderOperationResult(result, error, true); }
-  groupSelect.addEventListener("change", () => {
-    fillSelect(student, "Выберите студента", group()?.students || [], item => item.github_login, item => `${item.full_name || item.github_login} · @${item.github_login}`);
-    fillSelect(lab, "Выберите лабораторную", group()?.labs || [], item => item.code, item => `${item.code} · ${item.name}`);
-    refresh();
+  groups.addEventListener("change", () => {
+    const group = githubImportGroups.find(item => item.id === groups.value);
+    fillSelect(students, "Выберите студентов", group?.students || [], item => item.github_login, item => `${item.full_name || item.github_login} · @${item.github_login}`);
+    fillSelect(labs, "Выберите лабораторные", group?.labs || [], item => item.code, item => `${item.code} · ${item.name}`);
+    students.options[0].disabled = true;
+    labs.options[0].disabled = true;
   });
-  student.addEventListener("change", refresh);
-  lab.addEventListener("change", refresh);
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
-    const submit = form.querySelector('[type="submit"]');
-    submit.disabled = true;
+  const selected = select => [...select.selectedOptions].map(option => option.value).filter(Boolean);
+  const prepare = async all => {
+    if (!groups.value || !selected(labs).length || (!all && !selected(students).length)) {
+      renderOperationResult(result, new Error("Выберите группу, лабораторные и студентов"), true);
+      return;
+    }
+    if (all) [...students.options].forEach(option => { option.selected = !!option.value; });
     try {
-      const repository = expectedGitHubRepository(group(), student.value, lab.value);
-      if (!repository) throw new Error("Выберите группу, студента и лабораторную");
-      const metadataFile = form.elements.metadata.files[0];
-      if (!metadataFile || metadataFile.size > 16384) throw new Error("Выберите JSON, созданный clone-lab.py");
-      const metadata = validateCloneMetadata(JSON.parse(await metadataFile.text()), repository);
-      const archive = form.elements.archive.files[0];
-      if (!archive || archive.size > 100 * 1024 * 1024) throw new Error("Выберите ZIP размером не более 100 МБ");
-      const digest = await crypto.subtle.digest("SHA-256", await archive.arrayBuffer());
-      const archiveSHA = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
-      if (archiveSHA !== metadata.archive_sha256) throw new Error("ZIP и JSON относятся к разным экспортам. Выберите пару файлов от одного запуска скрипта.");
-      const payload = new FormData();
-      payload.set("group_id", group().id);
-      payload.set("group_code", group().code);
-      payload.set("github_login", student.value);
-      payload.set("lab_code", lab.value);
-      payload.set("repository_full_name", repository);
-      payload.set("version_label", metadata.version_label);
-      payload.set("commit_sha", metadata.commit_sha);
-      payload.set("archive", archive);
-      const value = await api("/api/v1/teacher/github-imports", {method: "POST", body: payload});
+      const value = await api("/api/v1/teacher/local-imports", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({group_id: groups.value, students: selected(students), labs: selected(labs), branch: all ? "latest" : form.elements.branch.value, all_students: all})});
+      const code = `import urllib.request;exec(compile(urllib.request.urlopen(${JSON.stringify(location.origin + "/static/import-labs.py")},timeout=30).read(),"import-labs.py","exec"))`;
+      const quote = text => "'" + text.replaceAll("'", "'\\''") + "'";
+      command.textContent = `python3 -c ${quote(code)} --site ${quote(location.origin)} --ticket ${quote(value.ticket)}`;
+      copy.disabled = false;
       renderOperationResult(result, value);
-      result.querySelector("p").textContent = "Работа загружена. Проверьте ZIP и подтвердите версию в очереди ниже.";
-      await loadPendingImports();
+      result.querySelector("p").textContent = `Подготовлено работ: ${value.count}. Выполните команду в терминале. Она действует до ${new Date(value.expires_at).toLocaleTimeString()}.`;
+      const globalGroup = document.querySelector("#group-select");
+      if (globalGroup) globalGroup.value = groups.value;
+      clearTimeout(refreshTimer);
+      const refresh = async () => {
+        if (Date.now() > Date.parse(value.expires_at)) return;
+        try { await loadPendingImports(); } catch (error) { console.error(error); }
+        refreshTimer = setTimeout(refresh, 5000);
+      };
+      await refresh();
     } catch (error) { renderOperationResult(result, error, true); }
-    finally { submit.disabled = false; }
+  };
+  form.addEventListener("submit", event => { event.preventDefault(); prepare(false); });
+  document.querySelector("#github-import-all").addEventListener("click", () => prepare(true));
+  copy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(command.textContent); copy.textContent = "Скопировано"; }
+    catch { renderOperationResult(result, new Error("Выделите и скопируйте команду вручную"), true); }
   });
 }
 initializeGitHubImport();

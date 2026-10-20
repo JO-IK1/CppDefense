@@ -366,6 +366,91 @@ paths:
               schema: { $ref: '#/components/schemas/Import' }
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /api/v1/teacher/local-imports:
+    post:
+      tags: [Imports]
+      operationId: prepareLocalImportCommand
+      x-roles: [teacher, admin]
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [group_id, labs, branch]
+              properties:
+                group_id: { $ref: '#/components/schemas/Uuid' }
+                students: { type: array, items: { type: string } }
+                labs: { type: array, minItems: 1, items: { type: string } }
+                branch: { type: string, pattern: '^(latest|deadline_[0-9]+)$' }
+                all_students: { type: boolean }
+      responses:
+        '201':
+          description: A two-hour signed upload ticket for up to 200 selected works
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket, count, expires_at]
+                properties:
+                  ticket: { type: string }
+                  count: { type: integer }
+                  expires_at: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /api/v1/local-import/plan:
+    get:
+      tags: [Imports]
+      operationId: readLocalImportPlan
+      security:
+        - localImportTicket: []
+      responses:
+        '200':
+          description: Selected repository items and deadline policies for the local script
+          content:
+            application/json:
+              schema: { type: object }
+        '401': { description: Invalid or expired ticket }
+  /api/v1/local-import/items/{item_id}/archive:
+    post:
+      tags: [Imports]
+      operationId: uploadLocalImportArchive
+      description: Revalidates current teacher permissions. Repeating the same ticket item returns the original import without creating a duplicate.
+      security:
+        - localImportTicket: []
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/Uuid' }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archive, branch, commit_sha]
+              properties:
+                archive: { type: string, format: binary }
+                branch: { type: string, pattern: '^deadline_[0-9]+$' }
+                commit_sha: { type: string, pattern: '^[0-9a-f]{40}([0-9a-f]{24})?$' }
+      responses:
+        '202':
+          description: Work is in the teacher approval queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  import_id: { $ref: '#/components/schemas/Uuid' }
+                  state: { type: string }
+        '401': { description: Invalid or expired ticket }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /api/v1/teacher/github-imports/context:
     get:
       tags: [Imports]
@@ -1218,6 +1303,10 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
 components:
   securitySchemes:
+    localImportTicket:
+      type: http
+      scheme: bearer
+      bearerFormat: signed-local-import-plan
     cookieAuth:
       type: apiKey
       in: cookie

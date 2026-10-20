@@ -10,15 +10,18 @@ roster record determine the owner and group. CppDefense validates the archive,
 creates its internal manifest and keeps the version unavailable for defenses
 until a teacher reviews and approves it.
 
-Teachers import via a local Git clone using Git, Python 3 and their own GitHub
-SSH access: `python3 deploy/clone-lab.py org/labwork1-student deadline_0 --output ./lab-export`.
-The standalone script can also be downloaded from the teacher page. It clones
-the branch, exports the exact commit with git archive and writes a JSON sidecar.
-Upload both files after selecting the site group, student and lab. Groups stay
-site-only; repositories use `<organization>/<lab-code>-<github-login>`.
-The browser no longer requests a PAT. The backend validates site ownership and
-queues teacher review; the uploaded SHA is provenance metadata, not independently
-authenticated proof of archive contents.
+Teachers select a group, multiple students/labs and a deadline branch, then
+copy one generated terminal command. It downloads import-labs.py from the site,
+clones via HTTPS using local Git credentials, exports ZIPs and uploads them
+automatically. Git and Python 3 are required. No manual ZIP/JSON handling is needed.
+The whole-group button includes every student and resolves the highest numeric
+deadline_N separately in each repository (deadline_10 beats deadline_9).
+Missing branches fail only that item. Signed tickets last two hours, include
+at most 200 items, and authorize upload only; teacher approval stays separate.
+Migration 000012 stores upload receipts, making retries of the same command
+idempotent. A new command creates a new batch. The open page refreshes its queue.
+The backend validates current site permissions. SHA is provenance metadata,
+not independently authenticated proof of archive contents.
 
 Podman checks reuse a separate ccache volume per defense session and image,
 limited to 256 MiB each. Only compilation is cached; CMake, linking and CTest

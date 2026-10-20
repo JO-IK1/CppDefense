@@ -275,7 +275,7 @@ func (r *ImportRepository) CreateStudentReview(ctx context.Context, actor, filen
 	return r.Get(ctx, actor, importID)
 }
 
-func (r *ImportRepository) CreateGitHubReview(ctx context.Context, actor, groupID, repositoryFullName string, object appstorage.Object, analysis importer.Analysis) (Import, error) {
+func (r *ImportRepository) CreateGitHubReview(ctx context.Context, actor, groupID, repositoryFullName string, object appstorage.Object, analysis importer.Analysis, receipt ...string) (Import, error) {
 	if len(analysis.Projects) != 1 || analysis.Manifest.Source != "teacher_import" || analysis.Manifest.CommitSHA == "" {
 		return Import{}, fmt.Errorf("github archive metadata mismatch")
 	}
@@ -284,6 +284,19 @@ func (r *ImportRepository) CreateGitHubReview(ctx context.Context, actor, groupI
 		return Import{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if len(receipt) > 0 {
+		if _, err = tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1,0))`, receipt[0]); err != nil {
+			return Import{}, err
+		}
+		var existing string
+		err = tx.QueryRow(ctx, `select import_id from local_import_receipts where id=$1 and actor_id=$2`, receipt[0], actor).Scan(&existing)
+		if err == nil {
+			return r.Get(ctx, actor, existing)
+		}
+		if err != pgx.ErrNoRows {
+			return Import{}, err
+		}
+	}
 	var groupCode, organizationLogin string
 	var allowed bool
 	err = tx.QueryRow(ctx, `
@@ -331,6 +344,11 @@ func (r *ImportRepository) CreateGitHubReview(ctx context.Context, actor, groupI
 	_, err = tx.Exec(ctx, `insert into import_items(id,import_id,student_record_id,lab_id,github_login_input,project_path,action,file_count,uncompressed_size) values($1,$2,$3,$4,$5,$6,'create_version',$7,$8)`, itemID, importID, studentID, labID, login, project.Item.ProjectPath, project.FileCount, project.Size)
 	if err != nil {
 		return Import{}, err
+	}
+	if len(receipt) > 0 {
+		if _, err = tx.Exec(ctx, `insert into local_import_receipts(id,actor_id,import_id) values($1,$2,$3)`, receipt[0], actor, importID); err != nil {
+			return Import{}, err
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return Import{}, err
