@@ -3,6 +3,7 @@ package runner
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io/fs"
@@ -77,7 +78,12 @@ emit_stage() {
   printf '\n__CPPDEFENSE_END__\n'
 }
 
-cmake -S /workspace -B /build \
+cache_args=""
+if command -v ccache >/dev/null 2>&1 && [ -d /ccache ]; then
+  export CCACHE_DIR=/ccache CCACHE_MAXSIZE=256M CCACHE_COMPILERCHECK=content
+  cache_args="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+fi
+cmake -S /workspace -B /build $cache_args \
   -DCMAKE_BUILD_TYPE=Release \
   -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest \
   -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
@@ -88,6 +94,7 @@ if [ "$configure_code" -ne 0 ]; then exit 0; fi
 
 cmake --build /build --parallel 2 >/tmp/cppdefense-build.log 2>&1
 build_code=$?
+if [ -n "$cache_args" ]; then ccache --show-stats >>/tmp/cppdefense-build.log 2>&1; fi
 emit_stage build "$build_code"
 if [ "$build_code" -ne 0 ]; then exit 0; fi
 
@@ -98,8 +105,22 @@ exit 0
 `
 
 func runSandbox(ctx context.Context, runtime, image, project string) sandboxResults {
+	return runSandboxCached(ctx, runtime, image, project, "")
+}
+
+func runSandboxCached(ctx context.Context, runtime, image, project, sessionID string) sandboxResults {
 	absolute, _ := filepath.Abs(project)
 	args := []string{"run", "--rm", "--network", "none", "--cpus", "1.0", "--memory", "512m", "--memory-swap", "512m", "--pids-limit", "128", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=256m", "--tmpfs", "/build:rw,nosuid,nodev,size=768m", "--user", "65532:65532", "-v", absolute + ":/workspace:ro", image, "sh", "-lc", sandboxScript}
+	if sessionID != "" && filepath.Base(runtime) == "podman" {
+		// Separate caches prevent one defense from poisoning another's compiler outputs.
+		digest := sha256.Sum256([]byte(image + "\x00" + sessionID))
+		volume := fmt.Sprintf("cppdefense-ccache-%x", digest[:16])
+		create := exec.CommandContext(ctx, runtime, "volume", "create", "--label", "cppdefense.cache=compiler", volume)
+		if err := create.Run(); err == nil {
+			position := len(args) - 4
+			args = append(args[:position], append([]string{"-v", volume + ":/ccache:U"}, args[position:]...)...)
+		}
+	}
 	command := exec.CommandContext(ctx, runtime, args...)
 	var output limitedBuffer
 	command.Stdout, command.Stderr = &output, &output

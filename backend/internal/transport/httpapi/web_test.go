@@ -72,7 +72,7 @@ func TestTeacherConfiguresEveryDefenseInsteadOfLaboratoryDefaults(t *testing.T) 
 	}
 }
 
-func TestTeacherPageExplainsLocalGitHubTokenHandling(t *testing.T) {
+func TestTeacherPageOffersLocalCloneImport(t *testing.T) {
 	templates, err := template.ParseFS(webassets.Files, "templates/*.html")
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestTeacherPageExplainsLocalGitHubTokenHandling(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := output.String()
-	for _, expected := range []string{`id="github-import-form"`, `name="github_token" type="password"`, `id="github-forget-token"`, `Токен используется только браузером`} {
+	for _, expected := range []string{`id="github-import-form"`, `name="archive"`, `name="metadata"`, `/static/clone-lab.py`, `Локальный git clone`} {
 		if !strings.Contains(html, expected) {
 			t.Fatalf("GitHub importer is missing %s", expected)
 		}
