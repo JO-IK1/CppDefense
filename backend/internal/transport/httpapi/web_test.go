@@ -84,7 +84,7 @@ func TestTeacherPageOffersLocalCloneImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := output.String()
-	for _, expected := range []string{`id="github-import-form"`, `name="archive"`, `name="metadata"`, `/static/clone-lab.py`, `Локальный git clone`} {
+	for _, expected := range []string{`id="github-import-form"`, `multiple`, `id="github-import-all"`, `Подготовить команду`, `Локальный git clone`} {
 		if !strings.Contains(html, expected) {
 			t.Fatalf("GitHub importer is missing %s", expected)
 		}

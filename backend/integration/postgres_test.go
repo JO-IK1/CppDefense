@@ -87,7 +87,7 @@ func TestMigrationsAreRepeatable(t *testing.T) {
 	if err := db.Pool().QueryRow(context.Background(), "select count(*) from cppdefense_schema_migrations").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 11 {
+	if count != 12 {
 		t.Fatalf("migration count = %d", count)
 	}
 	var legacyTable *string
@@ -360,12 +360,17 @@ func TestTeacherGitHubImportUsesSiteGroupAndPersistsCommit(t *testing.T) {
 	objectID, _ := domain.NewUUIDv7()
 	originalKey, _ := appstorage.NewKey(appstorage.OriginalArchives, objectID, ".zip")
 	originalDigest := sha256.Sum256([]byte("github archive"))
-	created, err := repository.CreateGitHubReview(ctx, teacherID, groupID, repositoryName, appstorage.Object{Key: originalKey, Size: 256, SHA256: originalDigest}, analysis)
+	receiptID, _ := domain.NewUUIDv7()
+	created, err := repository.CreateGitHubReview(ctx, teacherID, groupID, repositoryName, appstorage.Object{Key: originalKey, Size: 256, SHA256: originalDigest}, analysis, receiptID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.State != "review_pending" || len(created.Items) != 1 {
 		t.Fatalf("unexpected pending import: %#v", created)
+	}
+	repeated, err := repository.CreateGitHubReview(ctx, teacherID, groupID, repositoryName, appstorage.Object{Key: originalKey, Size: 256, SHA256: originalDigest}, analysis, receiptID)
+	if err != nil || repeated.ID != created.ID {
+		t.Fatalf("repeated upload: %v %#v", err, repeated)
 	}
 	if _, err = repository.CreateGitHubReview(ctx, teacherID, groupID, organizationLogin+"/labwork1-someone-else", appstorage.Object{Key: originalKey, Size: 256, SHA256: originalDigest}, analysis); err == nil {
 		t.Fatal("mismatched repository was accepted")
