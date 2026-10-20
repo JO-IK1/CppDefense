@@ -105,13 +105,27 @@ test("GitHub importer derives a repository from the site group metadata", () => 
   assert.equal(repository, "is-itmo-c-26/labwork1-student-one");
 });
 
-test("GitHub importer accepts only deadline branches with immutable commit SHAs", () => {
+test("Local clone importer rejects metadata for another student or mutable ref", () => {
   const context = browserContext(null);
-  const names = vm.runInContext(`${source}\ngithubDeadlineBranches([
-    { name: "deadline_2", commit: { sha: "2222222222222222222222222222222222222222" } },
-    { name: "main", commit: { sha: "1111111111111111111111111111111111111111" } },
-    { name: "deadline_0", commit: { sha: "0000000000000000000000000000000000000000" } },
-    { name: "deadline_1", commit: { sha: "invalid" } }
-  ]).map(branch => branch.name).join(",");`, context);
-  assert.equal(names, "deadline_0,deadline_2");
+  vm.runInContext(source, context);
+  const metadata = {repository_full_name: "org/labwork1-Student", version_label: "deadline_0", commit_sha: "1".repeat(40), archive_sha256: "2".repeat(64)};
+  context.metadata = metadata;
+  assert.equal(vm.runInContext('validateCloneMetadata(metadata, "org/labwork1-student").commit_sha', context), metadata.commit_sha);
+  assert.throws(() => vm.runInContext('validateCloneMetadata(metadata, "org/labwork1-other")', context));
+  context.metadata = {...metadata, commit_sha: "main"};
+  assert.throws(() => vm.runInContext('validateCloneMetadata(metadata, "org/labwork1-student")', context));
+});
+
+test("Student repository highlights only the selected entity and escapes its source", () => {
+  const context = browserContext(null);
+  let rendered;
+  const code = {replaceChildren(...children) { rendered = children; }, querySelector() { return null; }};
+  context.document.querySelector = selector => selector === "#source-code code" ? code : null;
+  context.document.createElement = () => ({});
+  vm.runInContext(`${source}\nactiveChallenge = {file_path: "main.cpp", begin_line: 2, end_line: 3}; renderStudentSource("header\\nint main() {\\n/* <TODO> */\\n}", "main.cpp");`, context);
+  assert.equal(rendered[0].className, "source-line");
+  assert.match(rendered[1].className, /source-line--restore/);
+  assert.match(rendered[2].className, /source-line--restore/);
+  assert.doesNotMatch(rendered[2].innerHTML, /<TODO>/);
+  assert.equal(rendered[3].className, "source-line");
 });

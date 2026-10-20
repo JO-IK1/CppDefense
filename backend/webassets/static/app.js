@@ -160,56 +160,11 @@ document.querySelector("#student-import-form")?.addEventListener("submit", async
   }
 });
 
-let githubImportToken = "";
 let githubImportGroups = [];
 
 function expectedGitHubRepository(group, studentLogin, labCode) {
   if (!group?.organization_login || !studentLogin || !labCode) return "";
   return `${group.organization_login}/${labCode}-${studentLogin}`;
-}
-
-function githubDeadlineBranches(branches) {
-  return (branches || [])
-    .filter(branch => /^deadline_[0-9]+$/.test(branch?.name || "") && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(branch?.commit?.sha || ""))
-    .sort((left, right) => Number(left.name.slice(9)) - Number(right.name.slice(9)));
-}
-
-async function githubAPI(path, token, accept = "application/vnd.github+json") {
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      Accept: accept,
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    redirect: "follow",
-  });
-  if (!response.ok) {
-    const value = await response.json().catch(() => ({}));
-    const error = new Error(value.message || `GitHub API: HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return response;
-}
-
-function githubImportElements() {
-  const form = document.querySelector("#github-import-form");
-  if (!form) return null;
-  return {
-    form,
-    card: form.closest(".github-import-card"),
-    token: form.elements.github_token,
-    group: form.elements.group_id,
-    student: form.elements.github_login,
-    lab: form.elements.lab_code,
-    version: form.elements.version_label,
-    repository: document.querySelector("#github-repository-name"),
-    connect: document.querySelector("#github-connect"),
-    forget: document.querySelector("#github-forget-token"),
-    branches: document.querySelector("#github-load-branches"),
-    submit: document.querySelector("#github-import-submit"),
-    result: document.querySelector("#github-import-result"),
-  };
 }
 
 function fillSelect(select, placeholder, items, value, label) {
@@ -223,144 +178,74 @@ function fillSelect(select, placeholder, items, value, label) {
   select.disabled = items.length === 0;
 }
 
-function selectedGitHubGroup(elements) {
-  return githubImportGroups.find(group => group.id === elements.group.value);
-}
-
-function updateGitHubRepositoryPreview(elements) {
-  const group = selectedGitHubGroup(elements);
-  const repository = expectedGitHubRepository(group, elements.student.value, elements.lab.value);
-  elements.repository.textContent = repository || "—";
-  elements.repository.title = repository;
-  elements.branches.disabled = !githubImportToken || !repository;
-  elements.version.disabled = true;
-  elements.submit.disabled = true;
-  const placeholder = node("option", "", "Сначала проверьте репозиторий");
-  placeholder.value = "";
-  elements.version.replaceChildren(placeholder);
-}
-
-function renderGitHubStatus(elements, message, error = false) {
-  elements.result.replaceChildren();
-  const card = node("div", `operation-card ${error ? "operation-card--error" : "operation-card--success"}`);
-  card.append(node("strong", "", error ? "GitHub недоступен" : "GitHub подключён"), node("p", "", message));
-  elements.result.append(card);
-}
-
-function forgetGitHubToken(elements = githubImportElements()) {
-  githubImportToken = "";
-  if (!elements) return;
-  elements.token.value = "";
-  elements.connect.disabled = false;
-  elements.forget.disabled = true;
-  elements.branches.disabled = true;
-  elements.submit.disabled = true;
-  elements.result.replaceChildren();
+function validateCloneMetadata(value, repository) {
+  if (typeof value?.repository_full_name !== "string" || value.repository_full_name.toLowerCase() !== repository.toLowerCase()) throw new Error("Репозиторий в JSON не соответствует выбранным студенту и лабораторной");
+  if (!/^deadline_[0-9]+$/.test(value.version_label || "")) throw new Error("В JSON должна быть ветка deadline_N");
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(value.commit_sha || "")) throw new Error("В JSON отсутствует корректный SHA коммита");
+  if (!/^[0-9a-f]{64}$/.test(value.archive_sha256 || "")) throw new Error("В JSON отсутствует контрольная сумма ZIP. Создайте экспорт текущей версией скрипта.");
+  return value;
 }
 
 async function initializeGitHubImport() {
-  const elements = githubImportElements();
-  if (!elements) return;
+  const form = document.querySelector("#github-import-form");
+  if (!form) return;
+  const result = document.querySelector("#github-import-result");
+  const student = form.elements.github_login;
+  const lab = form.elements.lab_code;
+  const groupSelect = form.elements.group_id;
+  const group = () => githubImportGroups.find(item => item.id === groupSelect.value);
+  const refresh = () => {
+    const repository = expectedGitHubRepository(group(), student.value, lab.value);
+    document.querySelector("#github-repository-name").textContent = repository || "—";
+    document.querySelector("#github-clone-command").textContent = repository
+      ? `python3 deploy/clone-lab.py ${repository} deadline_0 --output ./lab-export`
+      : "Выберите группу, студента и лабораторную";
+  };
   try {
     const value = await api("/api/v1/teacher/github-imports/context");
     githubImportGroups = value.groups || [];
-    fillSelect(elements.group, "Выберите группу", githubImportGroups, group => group.id, group => `${group.code} · ${group.name} · ${group.organization_login}`);
-  } catch (error) {
-    renderOperationResult(elements.result, error, true);
-  }
-
-  elements.group.addEventListener("change", () => {
-    const group = selectedGitHubGroup(elements);
-    fillSelect(elements.student, "Выберите студента", group?.students || [], student => student.github_login, student => `${student.full_name || student.github_login} · @${student.github_login}`);
-    fillSelect(elements.lab, "Выберите лабораторную", group?.labs || [], lab => lab.code, lab => `${lab.code} · ${lab.name}`);
-    updateGitHubRepositoryPreview(elements);
+    fillSelect(groupSelect, "Выберите группу", githubImportGroups, item => item.id, item => `${item.code} · ${item.name}`);
+  } catch (error) { renderOperationResult(result, error, true); }
+  groupSelect.addEventListener("change", () => {
+    fillSelect(student, "Выберите студента", group()?.students || [], item => item.github_login, item => `${item.full_name || item.github_login} · @${item.github_login}`);
+    fillSelect(lab, "Выберите лабораторную", group()?.labs || [], item => item.code, item => `${item.code} · ${item.name}`);
+    refresh();
   });
-  elements.student.addEventListener("change", () => updateGitHubRepositoryPreview(elements));
-  elements.lab.addEventListener("change", () => updateGitHubRepositoryPreview(elements));
-  elements.version.addEventListener("change", () => {
-    elements.submit.disabled = !githubImportToken || !elements.version.value;
-  });
-
-  elements.connect.addEventListener("click", async () => {
-    const candidate = elements.token.value.trim();
-    if (!candidate) {
-      renderGitHubStatus(elements, "Вставьте персональный токен GitHub.", true);
-      return;
-    }
-    elements.connect.disabled = true;
-    try {
-      const profile = await (await githubAPI("/user", candidate)).json();
-      githubImportToken = candidate;
-      elements.token.value = "";
-      elements.forget.disabled = false;
-      renderGitHubStatus(elements, `Авторизация подтверждена для @${profile.login}. Токен хранится только до закрытия вкладки.`);
-      updateGitHubRepositoryPreview(elements);
-    } catch (error) {
-      githubImportToken = "";
-      elements.connect.disabled = false;
-      renderGitHubStatus(elements, error.message, true);
-    }
-  });
-  elements.forget.addEventListener("click", () => forgetGitHubToken(elements));
-
-  elements.branches.addEventListener("click", async () => {
-    const repository = elements.repository.textContent;
-    if (!githubImportToken || !repository || repository === "—") return;
-    elements.card.classList.add("is-busy");
-    elements.branches.disabled = true;
-    try {
-      await githubAPI(`/repos/${repository}`, githubImportToken);
-      const branches = githubDeadlineBranches(await (await githubAPI(`/repos/${repository}/branches?per_page=100`, githubImportToken)).json());
-      fillSelect(elements.version, branches.length ? "Выберите deadline" : "Ветки deadline_X не найдены", branches, branch => branch.name, branch => `${branch.name} · ${branch.commit.sha.slice(0, 8)}`);
-      [...elements.version.options].slice(1).forEach((option, index) => { option.dataset.sha = branches[index].commit.sha; });
-      elements.submit.disabled = true;
-      renderGitHubStatus(elements, branches.length ? `Репозиторий ${repository} доступен. Найдено веток: ${branches.length}.` : `Репозиторий ${repository} доступен, но веток deadline_X нет.`, branches.length === 0);
-    } catch (error) {
-      renderGitHubStatus(elements, `${repository}: ${error.message}`, true);
-    } finally {
-      elements.card.classList.remove("is-busy");
-      elements.branches.disabled = !githubImportToken;
-    }
-  });
-
-  elements.form.addEventListener("submit", async event => {
+  student.addEventListener("change", refresh);
+  lab.addEventListener("change", refresh);
+  form.addEventListener("submit", async event => {
     event.preventDefault();
-    const group = selectedGitHubGroup(elements);
-    const repository = elements.repository.textContent;
-    const selectedBranch = elements.version.selectedOptions[0];
-    const commitSHA = selectedBranch?.dataset.sha || "";
-    if (!githubImportToken || !group || !repository || !commitSHA) return;
-    elements.card.classList.add("is-busy");
-    elements.submit.disabled = true;
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
     try {
-      renderGitHubStatus(elements, `Скачиваем ${repository}@${commitSHA.slice(0, 8)} напрямую из GitHub…`);
-      const archive = await (await githubAPI(`/repos/${repository}/zipball/${commitSHA}`, githubImportToken, "application/vnd.github+json")).blob();
-      if (archive.size > 100 * 1024 * 1024) throw new Error("ZIP превышает лимит 100 МБ");
+      const repository = expectedGitHubRepository(group(), student.value, lab.value);
+      if (!repository) throw new Error("Выберите группу, студента и лабораторную");
+      const metadataFile = form.elements.metadata.files[0];
+      if (!metadataFile || metadataFile.size > 16384) throw new Error("Выберите JSON, созданный clone-lab.py");
+      const metadata = validateCloneMetadata(JSON.parse(await metadataFile.text()), repository);
+      const archive = form.elements.archive.files[0];
+      if (!archive || archive.size > 100 * 1024 * 1024) throw new Error("Выберите ZIP размером не более 100 МБ");
+      const digest = await crypto.subtle.digest("SHA-256", await archive.arrayBuffer());
+      const archiveSHA = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+      if (archiveSHA !== metadata.archive_sha256) throw new Error("ZIP и JSON относятся к разным экспортам. Выберите пару файлов от одного запуска скрипта.");
       const payload = new FormData();
-      payload.set("group_id", group.id);
-      payload.set("group_code", group.code);
-      payload.set("github_login", elements.student.value);
-      payload.set("lab_code", elements.lab.value);
-      payload.set("version_label", elements.version.value);
+      payload.set("group_id", group().id);
+      payload.set("group_code", group().code);
+      payload.set("github_login", student.value);
+      payload.set("lab_code", lab.value);
       payload.set("repository_full_name", repository);
-      payload.set("commit_sha", commitSHA);
-      payload.set("archive", archive, `${elements.lab.value}-${elements.student.value}-${elements.version.value}.zip`);
-      const value = await api("/api/v1/teacher/github-imports", { method: "POST", body: payload });
-      renderOperationResult(elements.result, value);
-      elements.result.querySelector("p").textContent = "Архив скачан браузером, проверен сервером и добавлен в очередь подтверждения. Токен на сервер не передавался.";
+      payload.set("version_label", metadata.version_label);
+      payload.set("commit_sha", metadata.commit_sha);
+      payload.set("archive", archive);
+      const value = await api("/api/v1/teacher/github-imports", {method: "POST", body: payload});
+      renderOperationResult(result, value);
+      result.querySelector("p").textContent = "Работа загружена. Проверьте ZIP и подтвердите версию в очереди ниже.";
       await loadPendingImports();
-    } catch (error) {
-      if (error instanceof ApiError) renderOperationResult(elements.result, error, true);
-      else renderGitHubStatus(elements, error.message, true);
-    } finally {
-      elements.card.classList.remove("is-busy");
-      elements.submit.disabled = !elements.version.value;
-    }
+    } catch (error) { renderOperationResult(result, error, true); }
+    finally { submit.disabled = false; }
   });
 }
-
 initializeGitHubImport();
-window.addEventListener("pagehide", () => forgetGitHubToken());
 
 let rosterDocumentText = "";
 
@@ -435,6 +320,7 @@ let draftVersion = 1;
 let defensePoll;
 let defenseRefreshInFlight = false;
 let repositoryLoaded = false;
+let activeChallenge = null;
 let wheelCandidates = [];
 let wheelSpinAnimation;
 let wheelSettleAnimation;
@@ -593,8 +479,32 @@ function renderRepositoryTree(root, items, onOpen) {
 async function openRepositoryFile(filePath) {
   const value = await api(`/api/v1/defenses/${defenseID}/repository/file?path=${encodeURIComponent(filePath)}`);
   document.querySelector("#source-title").textContent = value.path + (value.masked ? " · функция скрыта" : "");
-  document.querySelector("#source-code code").textContent = value.content;
+  renderStudentSource(value.content, value.path);
   document.querySelectorAll("#repository-files button").forEach(button => button.classList.toggle("is-active", button.dataset.path === filePath));
+}
+
+function renderStudentSource(content, filePath) {
+  const code = document.querySelector("#source-code code");
+  const selected = activeChallenge?.file_path === filePath;
+  code.replaceChildren(...content.split("\n").map((line, index) => {
+    const marked = selected && index + 1 >= activeChallenge.begin_line && index + 1 <= activeChallenge.end_line;
+    const span = node("span", marked ? "source-line source-line--restore" : "source-line");
+    span.innerHTML = highlightCpp(line) || " ";
+    return span;
+  }));
+  document.querySelectorAll("#repository-files button").forEach(button => {
+    const target = button.dataset.path === activeChallenge?.file_path;
+    button.classList.toggle("repository-file--restore", target);
+    if (target) {
+      button.title = `${button.dataset.path} · здесь восстанавливается функция`;
+      let parent = button.parentElement;
+      while (parent && parent.id !== "repository-files") {
+        if (parent.tagName === "DETAILS") parent.open = true;
+        parent = parent.parentElement;
+      }
+    }
+  });
+  code.querySelector(".source-line--restore")?.scrollIntoView({block: "nearest"});
 }
 
 async function loadRepository(selectedPath) {
@@ -735,6 +645,9 @@ initializeStudentLabTable();
 
 document.querySelectorAll("[data-start-defense]").forEach(button => {
   button.onclick = async () => {
+    if (!confirm("Перед началом защиты отключите все расширения (плагины) браузера. После отключения вернитесь на сайт. Вы готовы начать защиту?")) return;
+    activeChallenge = null;
+    document.querySelector("#answer-signature").textContent = "Сигнатура появится после выбора задания";
     document.querySelector("#defense").classList.remove("hidden");
     document.querySelector("#defense").scrollIntoView({ behavior: "smooth", block: "start" });
     startWheel();
@@ -763,6 +676,9 @@ async function refreshDefense() {
     }
     status.textContent = preparationStageLabels[value.preparation_stage] || defenseStatusLabels[value.status] || value.status;
     if (value.challenge && value.status === "active") {
+      activeChallenge = value.challenge;
+      document.querySelector("#answer-signature").textContent = value.challenge.signature.trim().replace(/\{\s*$/, "").trimEnd() + " {";
+      document.querySelector("#answer-closing").textContent = ["class", "struct"].includes(value.challenge.entity_type) ? "};" : "}";
       settleWheel(value.selected_candidate_id, value.challenge);
       status.textContent = `${value.challenge.signature} · строки ${value.challenge.begin_line}–${value.challenge.end_line}`;
       if (!repositoryLoaded) {

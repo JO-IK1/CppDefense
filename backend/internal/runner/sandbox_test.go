@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -8,6 +9,37 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestCompilerCacheIsReusedOnlyWithinSameSessionAndImage(t *testing.T) {
+	directory := t.TempDir()
+	runtime := filepath.Join(directory, "podman")
+	log := filepath.Join(directory, "arguments")
+	t.Setenv("CPPDEFENSE_TEST_ARGS", log)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CPPDEFENSE_TEST_ARGS\"\n"
+	if err := os.WriteFile(runtime, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range [][2]string{{"image-a", "session-a"}, {"image-a", "session-a"}, {"image-a", "session-b"}, {"image-b", "session-a"}} {
+		runSandboxCached(context.Background(), runtime, input[0], directory, input[1])
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var volumes []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "volume create ") {
+			fields := strings.Fields(line)
+			volumes = append(volumes, fields[len(fields)-1])
+		}
+	}
+	if len(volumes) != 4 || volumes[0] != volumes[1] || volumes[0] == volumes[2] || volumes[0] == volumes[3] {
+		t.Fatalf("cache reuse/isolation failed: %v", volumes)
+	}
+	if strings.Count(string(data), ":/ccache:U") != 4 || !strings.Contains(string(data), "--network none") {
+		t.Fatal("cache mount or sandbox restrictions missing")
+	}
+}
 
 func TestMakeSandboxReadable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "attempt")

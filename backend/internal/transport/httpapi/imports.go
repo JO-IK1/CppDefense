@@ -72,7 +72,7 @@ func (h *importHTTP) createGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 	file, _, err := r.FormFile("archive")
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, "ARCHIVE_REQUIRED", "Не удалось получить ZIP из GitHub")
+		writeProblem(w, r, http.StatusBadRequest, "ARCHIVE_REQUIRED", "Выберите ZIP, созданный локальным скриптом git clone")
 		return
 	}
 	defer file.Close()

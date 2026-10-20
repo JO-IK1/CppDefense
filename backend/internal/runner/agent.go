@@ -139,7 +139,7 @@ func (a *agent) check(parent, ctx context.Context, attempt, workspace string, le
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error", ConfigureResult: result, BuildResult: result, CTestResult: result})
 	}
 	defer restoreSandboxOwnerAccess(attempt)
-	results := runSandbox(ctx, a.config.Runtime, a.config.Image, attempt)
+	results := runSandboxCached(ctx, a.config.Runtime, a.config.Image, attempt, lease.SessionID)
 	outcome := "failed"
 	if results.OK() {
 		outcome = "passed"

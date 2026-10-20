@@ -71,5 +71,7 @@ jobs:
         run: go vet ./...
       - name: Test browser behavior
         run: node --test webassets/static/app_test.mjs
+      - name: Test local Git clone exporter
+        run: python3 ../deploy/test_clone_lab.py
       - name: Build commands
         run: go build ./cmd/cppdefense ./cmd/runner

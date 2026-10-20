@@ -387,7 +387,7 @@ paths:
       tags: [Imports]
       operationId: createTeacherGitHubImport
       x-roles: [teacher, admin]
-      description: The browser downloads the archive directly from GitHub. The personal token is never part of this request.
+      description: The teacher clones a repository locally and uploads its ZIP plus commit metadata. GitHub credentials are not part of this request. The backend checks site ownership; the claimed commit is not independently authenticated.
       security:
         - cookieAuth: []
           csrfToken: []
