@@ -7,7 +7,7 @@ func TestMigrationsAreEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 12 {
+	if len(migrations) != 13 {
 		t.Fatalf("embedded migration count = %d", len(migrations))
 	}
 	if migrations[0].name != "000001_initial.sql" || migrations[1].name != "000002_storage_immutability.sql" || migrations[2].name != "000003_github_only_auth.sql" || migrations[3].name != "000004_candidate_signature.sql" || migrations[4].name != "000005_candidate_display_signature.sql" || migrations[5].name != "000006_runner_expiry_retry.sql" || migrations[6].name != "000007_defense_idempotency.sql" || migrations[7].name != "000008_masked_source.sql" || migrations[8].name != "000009_teacher_defense_configuration.sql" || migrations[9].name != "000010_defense_candidate_configuration.sql" || migrations[10].name != "000011_rosters_and_submission_metadata.sql" {

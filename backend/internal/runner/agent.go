@@ -104,6 +104,12 @@ func (a *agent) execute(parent context.Context, lease postgres.Lease) error {
 	if err != nil {
 		return err
 	}
+	if lease.DefenseMode == "hide_seek" {
+		if lease.Kind == "prepare_defense" {
+			return a.validateHide(parent, ctx, project, lease)
+		}
+		return a.checkHide(parent, ctx, project, lease)
+	}
 	if lease.Kind == "prepare_defense" {
 		return a.prepare(parent, ctx, workspace, lease)
 	}

@@ -5,6 +5,33 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("./app.js", import.meta.url), "utf8");
 
+test("hide-and-seek saves edits for multiple files without submitting protected files", () => {
+  const answer = {value: "changed", addEventListener() {}};
+  const context = browserContext(null, answer);
+  const serialized = vm.runInContext(`${source}
+    studentDefenseMode = "hide_seek";
+    hideEditingPath = "src/first.cpp"; hideEditingAllowed = true; hideEditingOriginal = "original";
+    rememberHideEdit();
+    hideEditingPath = "include/second.hpp"; hideEditingOriginal = "header";
+    document.querySelector("#answer").value = "new header"; rememberHideEdit();
+    hideEditingPath = "tests/test.cpp"; hideEditingAllowed = false;
+    document.querySelector("#answer").value = "forged";
+    defenseAnswer();
+  `, context);
+  assert.deepEqual(JSON.parse(serialized), {"src/first.cpp": "changed", "include/second.hpp": "new header"});
+});
+
+test("restoring the displayed mutated file removes its local override", () => {
+  const answer = {value: "mutated", addEventListener() {}};
+  const context = browserContext(null, answer);
+  const serialized = vm.runInContext(`${source}
+    studentDefenseMode = "hide_seek"; hideEdits = {"main.cpp": "changed"};
+    hideEditingPath = "main.cpp"; hideEditingAllowed = true; hideEditingOriginal = "mutated";
+    defenseAnswer();
+  `, context);
+  assert.deepEqual(JSON.parse(serialized), {});
+});
+
 function browserContext(wheel, answer = null) {
   return vm.createContext({
     alert() {},

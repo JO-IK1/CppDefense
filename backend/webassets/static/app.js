@@ -318,6 +318,24 @@ let defensePoll;
 let defenseRefreshInFlight = false;
 let repositoryLoaded = false;
 let activeChallenge = null;
+let studentDefenseMode = "restore";
+let hideEdits = {};
+let hideEditingPath = "";
+let hideEditingAllowed = false;
+let hideEditingOriginal = "";
+let hideDraftLoaded = false;
+
+function rememberHideEdit() {
+  if (studentDefenseMode !== "hide_seek" || !hideEditingPath || !hideEditingAllowed) return;
+  const value = document.querySelector("#answer").value;
+  if (value === hideEditingOriginal) delete hideEdits[hideEditingPath];
+  else hideEdits[hideEditingPath] = value;
+}
+function defenseAnswer() {
+  if (studentDefenseMode !== "hide_seek") return document.querySelector("#answer").value;
+  rememberHideEdit();
+  return JSON.stringify(hideEdits);
+}
 let wheelCandidates = [];
 let wheelSpinAnimation;
 let wheelSettleAnimation;
@@ -421,6 +439,7 @@ function initializeAnswerEditor() {
   answer.addEventListener("scroll", syncHighlightScroll);
   answer.addEventListener("keydown", event => {
     if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (answer.readOnly) return;
     event.preventDefault();
     const scrollTop = answer.scrollTop;
     const scrollLeft = answer.scrollLeft;
@@ -474,9 +493,20 @@ function renderRepositoryTree(root, items, onOpen) {
 }
 
 async function openRepositoryFile(filePath) {
+  rememberHideEdit();
   const value = await api(`/api/v1/defenses/${defenseID}/repository/file?path=${encodeURIComponent(filePath)}`);
   document.querySelector("#source-title").textContent = value.path + (value.masked ? " · функция скрыта" : "");
   renderStudentSource(value.content, value.path);
+  if (studentDefenseMode === "hide_seek") {
+    hideEditingPath = value.path;
+    hideEditingAllowed = value.editable === true;
+    hideEditingOriginal = value.content;
+    const answer = document.querySelector("#answer");
+    answer.value = hideEdits[value.path] ?? value.content;
+    answer.readOnly = !hideEditingAllowed;
+    document.querySelector("#answer-signature").textContent = value.path + (hideEditingAllowed ? " · редактирование" : " · только чтение");
+    renderAnswerHighlight();
+  }
   document.querySelectorAll("#repository-files button").forEach(button => button.classList.toggle("is-active", button.dataset.path === filePath));
 }
 
@@ -511,6 +541,7 @@ async function loadRepository(selectedPath) {
   renderRepositoryTree(root, value.items, openRepositoryFile);
   repositoryLoaded = true;
   if (selectedPath) await openRepositoryFile(selectedPath);
+  else if (studentDefenseMode === "hide_seek" && value.items.length) await openRepositoryFile((value.items.find(item => item.editable) || value.items[0]).path);
 }
 
 function wheelRotation(element) {
@@ -604,7 +635,7 @@ function settleWheel(selectedID, challenge) {
 }
 
 const defenseStatusLabels = { ready: "Ожидает настройки преподавателя", preparing: "Подготовка задания…", active: "Защита идёт", passed: "Защита успешно сдана", failed: "Защита не пройдена", error: "Ошибка подготовки защиты", expired: "Время защиты истекло", cancelled: "Защита отменена" };
-const preparationStageLabels = { analyzing_project: "Анализируем проект и ищем задания…", waiting_for_teacher: "Ожидаем настройки преподавателя", materializing_challenge: "Формируем выбранное задание…", ready: "Задание готово" };
+const preparationStageLabels = { analyzing_project: "Анализируем проект и ищем задания…", waiting_for_teacher: "Ожидаем настройки преподавателя", materializing_challenge: "Формируем выбранное задание…", validating_hide_seek: "Проверяем оригинал, логические ошибки и восстановление тестов…", ready: "Задание готово" };
 
 function initializeStudentLabTable() {
   const root = document.querySelector("#student-labs");
@@ -644,6 +675,10 @@ document.querySelectorAll("[data-start-defense]").forEach(button => {
   button.onclick = async () => {
     if (!confirm("Перед началом защиты отключите все расширения (плагины) браузера. После отключения вернитесь на сайт. Вы готовы начать защиту?")) return;
     activeChallenge = null;
+    studentDefenseMode = "restore";
+    hideEdits = {}; hideEditingPath = ""; hideDraftLoaded = false;
+    document.querySelector("#answer").value = "";
+    document.querySelector("#answer").readOnly = false;
     document.querySelector("#answer-signature").textContent = "Сигнатура появится после выбора задания";
     document.querySelector("#defense").classList.remove("hidden");
     document.querySelector("#defense").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -665,13 +700,34 @@ async function refreshDefense() {
     const status = document.querySelector("#defense-status");
     const timer = document.querySelector("#timer");
     const timerBar = document.querySelector("#defense-timer-bar");
+    studentDefenseMode = value.defense_mode || "restore";
+    const hide = studentDefenseMode === "hide_seek";
+    const answer = document.querySelector("#answer");
+    answer.readOnly = value.status !== "active" || (hide && !hideEditingAllowed);
+    document.querySelector("#save-draft").disabled = value.status !== "active";
+    document.querySelector("#submit-attempt").disabled = value.status !== "active";
+    const editorHint = document.querySelector(".editor-column .pane-title span:last-child");
+    if (editorHint) editorHint.textContent = hide ? "файл целиком" : "без внешних скобок";
+    document.querySelector(".wheel-column .wheel-stage")?.classList.toggle("hidden", hide);
+    document.querySelector(".wheel-column .eyebrow")?.classList.toggle("hidden", hide);
+    document.querySelector("#answer-closing")?.classList.toggle("hidden", hide);
+    const hint = document.querySelector("#source-access-hint");
+    if (hint) hint.textContent = hide ? "Изменяйте исходники и заголовки. Тесты и настройки доступны только для чтения." : "Выбранная сущность скрыта во всех просмотрах";
     draftVersion = value.draft_version || draftVersion;
     renderWheelCandidates(value.wheel_candidates);
-    if (value.current_draft && !document.querySelector("#answer").value) {
+    if (!hide && value.current_draft && !document.querySelector("#answer").value) {
       document.querySelector("#answer").value = value.current_draft;
       renderAnswerHighlight();
     }
     status.textContent = preparationStageLabels[value.preparation_stage] || defenseStatusLabels[value.status] || value.status;
+    if (hide && value.status === "active") {
+      if (!hideDraftLoaded) {
+        try { hideEdits = JSON.parse(value.current_draft || "{}"); } catch { hideEdits = {}; }
+        hideDraftLoaded = true;
+      }
+      status.textContent = `Прятки · изменённых мест: ${value.error_count}. Найдите ошибки и добейтесь прохождения тестов.`;
+      await loadRepository();
+    } else if (hide && value.preparation_error) status.textContent = value.preparation_error;
     if (value.challenge && value.status === "active") {
       activeChallenge = value.challenge;
       document.querySelector("#answer-signature").textContent = value.challenge.signature.trim().replace(/\{\s*$/, "").trimEnd() + " {";
@@ -717,7 +773,7 @@ async function pollDefense() {
 }
 
 document.querySelector("#save-draft")?.addEventListener("click", async () => {
-  const value = await api(`/api/v1/defenses/${defenseID}/draft`, { method: "PUT", headers: { "Content-Type": "application/json", "If-Match": `"${draftVersion}"` }, body: JSON.stringify({ answer: document.querySelector("#answer").value }) });
+  const value = await api(`/api/v1/defenses/${defenseID}/draft`, { method: "PUT", headers: { "Content-Type": "application/json", "If-Match": `"${draftVersion}"` }, body: JSON.stringify({ answer: defenseAnswer() }) });
   draftVersion = value.version;
 });
 
@@ -779,7 +835,7 @@ document.querySelector("#submit-attempt")?.addEventListener("click", async event
   button.disabled = true;
   button.textContent = "Проверяем…";
   try {
-    const value = await api(`/api/v1/defenses/${defenseID}/attempts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: document.querySelector("#answer").value }) });
+    const value = await api(`/api/v1/defenses/${defenseID}/attempts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: defenseAnswer() }) });
     renderAttemptResult(value);
     await pollAttempt(value.id);
   } finally {
@@ -869,6 +925,61 @@ let teacherDefense;
 let teacherFiles = [];
 let teacherFilePath = "";
 const teacherSourceCache = new Map();
+let hideMutations = [];
+let hideSelection = null;
+let hideValidationTimer;
+
+function teacherHideMode() {
+  return document.querySelector('#configure-defense-form [name="defense_mode"]')?.value === "hide_seek";
+}
+
+function renderHideMutations() {
+  const root = document.querySelector("#hide-mutations");
+  if (!root) return;
+  root.replaceChildren(...hideMutations.map((mutation, index) => {
+    const card = node("article", "hide-mutation");
+    card.append(node("strong", "", `${index + 1}. ${mutation.path}`));
+    card.append(node("pre", "", `Было:\n${mutation.before}\n\nСтало:\n${mutation.after || "(удаление)"}`));
+    const remove = node("button", "quiet-button", "Убрать");
+    remove.type = "button";
+    remove.onclick = () => { hideMutations.splice(index, 1); renderHideMutations(); };
+    card.append(remove); return card;
+  }));
+}
+
+function renderHideValidation(value) {
+  const root = document.querySelector("#hide-validation-report");
+  root.replaceChildren();
+  const report = value.hide_report;
+  if (!report) { root.append(node("p", "form-note", "Задание проверяется runner. Таймер студента ещё не запущен.")); return; }
+  root.append(node("strong", "", report.message));
+  for (const [key, title] of [["baseline", "Исходный проект"], ["mutated", "Проект с ошибками"], ["restored", "Возврат исходного кода"]]) {
+    const stages = report[key]; if (!stages) continue;
+    const group = node("details", "hide-report"); group.append(node("summary", "", title));
+    for (const [stage, label] of [["configure", "CMake"], ["build", "Сборка"], ["ctest", "Тесты"]]) {
+      const result = stages[stage]; if (!result) continue;
+      group.append(node("strong", "", `${label}: ${result.ok ? "ОК" : "Ошибка"} · код ${result.exit_code}`));
+      group.append(node("pre", "", result.log));
+    }
+    root.append(group);
+  }
+}
+
+document.querySelector("#hide-source")?.addEventListener("select", event => {
+  const source = event.target;
+  const before = source.value.slice(source.selectionStart, source.selectionEnd);
+  hideSelection = before ? {path: teacherFilePath, start: new TextEncoder().encode(source.value.slice(0, source.selectionStart)).length, before} : null;
+  document.querySelector("#hide-before").value = before;
+});
+document.querySelector("#hide-add")?.addEventListener("click", () => {
+  if (!hideSelection || !teacherFiles.find(file => file.path === hideSelection.path)?.editable) { setConfigurationError("Выделите фрагмент в доступном исходнике. Тесты и настройки изменять нельзя."); return; }
+  if (hideMutations.length >= 5) { setConfigurationError("Не более пяти изменённых мест"); return; }
+  const after = document.querySelector("#hide-after").value;
+  if (after === hideSelection.before) { setConfigurationError("Замена должна отличаться от исходника"); return; }
+  hideMutations.push({...hideSelection, after});
+  document.querySelector("#hide-after").value = "";
+  setConfigurationError(); renderHideMutations();
+});
 
 const entityLabels = { function: "Функция", class: "Класс", struct: "Структура" };
 
@@ -925,6 +1036,9 @@ async function openTeacherRepositoryFile(path) {
     teacherSourceCache.set(`${teacherDefense.id}:${path}`, value);
   }
   document.querySelector("#teacher-source-code code").textContent = value.content;
+  document.querySelector("#hide-source").value = value.content;
+  hideSelection = null;
+  document.querySelector("#hide-before").value = "";
   document.querySelectorAll("#teacher-repository-files button").forEach(button => button.classList.toggle("is-active", button.dataset.path === path));
   renderTeacherEntities(path, value.content);
 }
@@ -943,6 +1057,20 @@ function syncConfigurationMode() {
   const form = document.querySelector("#configure-defense-form");
   if (!form || !teacherDefense) return;
   const manual = form.elements.selection_mode.value === "manual";
+  const hide = teacherHideMode();
+  form.querySelectorAll(".restore-settings").forEach(element => element.classList.toggle("hidden", hide));
+  document.querySelector("#hide-composer").classList.toggle("hidden", !hide);
+  document.querySelector("#hide-validation-report").classList.toggle("hidden", !hide);
+  document.querySelector("#hide-source").classList.toggle("hidden", !hide);
+  document.querySelector("#teacher-source-code").classList.toggle("hidden", hide);
+  document.querySelector("#manual-candidate-workspace").classList.toggle("hide-seek-workspace", hide);
+  if (hide) {
+    document.querySelector("#manual-candidate-workspace").classList.remove("hidden");
+    document.querySelector("#selected-candidate").classList.add("hidden");
+    document.querySelector("#start-configured-defense").textContent = "Проверить задание и начать защиту";
+    return;
+  }
+  document.querySelector("#start-configured-defense").textContent = "Начать защиту";
   document.querySelector("#manual-candidate-workspace").classList.toggle("hidden", !manual);
   document.querySelector("#selected-candidate").classList.toggle("hidden", !manual);
   if (!manual) {
@@ -954,12 +1082,17 @@ function syncConfigurationMode() {
 }
 
 async function choosePendingDefense(defense) {
+  clearTimeout(hideValidationTimer);
+  hideMutations = (defense.teacher_mutations || []).map(value => ({...value})); hideSelection = null; renderHideMutations();
   teacherDefense = defense;
   teacherFilePath = "";
   const form = document.querySelector("#configure-defense-form");
   form.classList.remove("hidden");
   form.elements.defense_id.value = defense.id;
   form.elements.candidate_id.value = "";
+  form.elements.defense_mode.value = defense.defense_mode || "restore";
+  document.querySelector("#start-configured-defense").disabled = false;
+  renderHideValidation(defense);
   document.querySelector("#configuration-title").textContent = `${defense.student_login} · ${defense.lab_code}`;
   document.querySelector("#configuration-hint").textContent = defense.lab_name;
   document.querySelector("#selected-candidate").textContent = "В ручном режиме выберите функцию, класс или структуру.";
@@ -988,6 +1121,7 @@ async function loadPendingDefenses() {
 }
 
 document.querySelector("#load-pending-defenses")?.addEventListener("click", loadPendingDefenses);
+document.querySelector('#configure-defense-form [name="defense_mode"]')?.addEventListener("change", syncConfigurationMode);
 document.querySelector('#configure-defense-form [name="selection_mode"]')?.addEventListener("change", syncConfigurationMode);
 document.querySelector('#configure-defense-form [name="entity_mode"]')?.addEventListener("change", () => {
   const form = document.querySelector("#configure-defense-form");
@@ -1006,6 +1140,26 @@ document.querySelector("#configure-defense-form")?.addEventListener("submit", as
   const form = new FormData(event.target);
   const mode = form.get("selection_mode");
   const minutes = Number(form.get("time_limit_minutes"));
+  if (form.get("defense_mode") === "hide_seek") {
+    if (minutes < 1 || minutes > 30 || hideMutations.length < 1 || hideMutations.length > 5) { setConfigurationError("Выберите 1–5 мест и время от 1 до 30 минут"); return; }
+    const id = form.get("defense_id");
+    const start = document.querySelector("#start-configured-defense"); start.disabled = true;
+    try {
+      const value = await api(`/api/v1/defenses/${id}/hide/configure`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({time_limit_seconds: minutes * 60, mutations: hideMutations})});
+      renderHideValidation(value); setConfigurationError();
+      const poll = async () => {
+        if (teacherDefense?.id !== id) return;
+        try {
+          const status = await api(`/api/v1/defenses/${id}`);
+          renderHideValidation(status);
+          if (status.status === "preparing") hideValidationTimer = setTimeout(poll, 1500);
+          else { start.disabled = status.status !== "ready"; await loadPendingDefenses(); }
+        } catch (error) { setConfigurationError(error.message); start.disabled = false; }
+      };
+      await poll();
+    } catch (error) { setConfigurationError(error.problem?.title || error.message); start.disabled = false; }
+    return;
+  }
   const wheelSize = Number(form.get("wheel_size"));
   if (minutes < 1 || minutes > 30 || wheelSize < 2 || wheelSize > 12) {
     setConfigurationError("Время должно быть от 1 до 30 минут, колесо — от 2 до 12 секторов.");

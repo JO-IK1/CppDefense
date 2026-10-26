@@ -15,6 +15,7 @@ import (
 	"time"
 
 	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
+	"github.com/JO-IK1/CppDefense/backend/internal/application/hideseek"
 	"github.com/JO-IK1/CppDefense/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
@@ -24,29 +25,34 @@ type DefenseRepository struct{ db *Database }
 func NewDefenseRepository(db *Database) *DefenseRepository { return &DefenseRepository{db: db} }
 
 type Defense struct {
-	ID                  string           `json:"id"`
-	SessionID           string           `json:"session_id"`
-	SubmissionVersionID string           `json:"submission_version_id"`
-	StudentLogin        string           `json:"student_login"`
-	LabCode             string           `json:"lab_code"`
-	LabName             string           `json:"lab_name"`
-	Status              string           `json:"status"`
-	PreparationStage    string           `json:"preparation_stage"`
-	Seed                string           `json:"seed"`
-	TimeLimitSeconds    int              `json:"time_limit_seconds"`
-	WheelSize           *int             `json:"wheel_size"`
-	EntityMode          *string          `json:"entity_mode"`
-	SelectionMode       *string          `json:"selection_mode"`
-	StartedAt           *time.Time       `json:"started_at"`
-	DeadlineAt          *time.Time       `json:"deadline_at"`
-	FinishedAt          *time.Time       `json:"finished_at"`
-	CurrentDraft        string           `json:"current_draft"`
-	DraftVersion        int64            `json:"draft_version"`
-	SelectedCandidateID *string          `json:"selected_candidate_id"`
-	Challenge           *Challenge       `json:"challenge,omitempty"`
-	WheelCandidates     []WheelCandidate `json:"wheel_candidates"`
-	CandidateCatalog    []WheelCandidate `json:"candidate_catalog,omitempty"`
-	CreatedAt           time.Time        `json:"created_at"`
+	DefenseMode         string              `json:"defense_mode"`
+	ErrorCount          int                 `json:"error_count"`
+	HideReport          any                 `json:"hide_report,omitempty"`
+	TeacherMutations    []hideseek.Mutation `json:"teacher_mutations,omitempty"`
+	PreparationError    string              `json:"preparation_error,omitempty"`
+	ID                  string              `json:"id"`
+	SessionID           string              `json:"session_id"`
+	SubmissionVersionID string              `json:"submission_version_id"`
+	StudentLogin        string              `json:"student_login"`
+	LabCode             string              `json:"lab_code"`
+	LabName             string              `json:"lab_name"`
+	Status              string              `json:"status"`
+	PreparationStage    string              `json:"preparation_stage"`
+	Seed                string              `json:"seed"`
+	TimeLimitSeconds    int                 `json:"time_limit_seconds"`
+	WheelSize           *int                `json:"wheel_size"`
+	EntityMode          *string             `json:"entity_mode"`
+	SelectionMode       *string             `json:"selection_mode"`
+	StartedAt           *time.Time          `json:"started_at"`
+	DeadlineAt          *time.Time          `json:"deadline_at"`
+	FinishedAt          *time.Time          `json:"finished_at"`
+	CurrentDraft        string              `json:"current_draft"`
+	DraftVersion        int64               `json:"draft_version"`
+	SelectedCandidateID *string             `json:"selected_candidate_id"`
+	Challenge           *Challenge          `json:"challenge,omitempty"`
+	WheelCandidates     []WheelCandidate    `json:"wheel_candidates"`
+	CandidateCatalog    []WheelCandidate    `json:"candidate_catalog,omitempty"`
+	CreatedAt           time.Time           `json:"created_at"`
 }
 type WheelCandidate struct {
 	ID           string `json:"id"`
@@ -61,11 +67,14 @@ type WheelCandidate struct {
 	EndLine      int    `json:"end_line"`
 }
 type DefenseSourceAccess struct {
-	ObjectKey    string
-	SelectedFile string
-	BodyBegin    int64
-	BodyEnd      int64
-	MaskSelected bool
+	DefenseMode   string
+	HideMutations []hideseek.Mutation
+	StudentView   bool
+	ObjectKey     string
+	SelectedFile  string
+	BodyBegin     int64
+	BodyEnd       int64
+	MaskSelected  bool
 }
 type Challenge struct {
 	FunctionName string `json:"function_name"`
@@ -175,6 +184,9 @@ func (r *DefenseRepository) Get(ctx context.Context, actor, id string) (Defense,
 		if rows.Err() != nil {
 			return Defense{}, rows.Err()
 		}
+	}
+	if err := r.hideView(ctx, actor, &v); err != nil {
+		return Defense{}, err
 	}
 	return v, nil
 }
@@ -293,7 +305,7 @@ func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mod
 			return Defense{}, e
 		}
 	}
-	if _, e = tx.Exec(ctx, `update defenses set selected_candidate_id=$2,selection_mode=$3,time_limit_seconds=$4,wheel_size=$5,entity_mode=$6,status='preparing' where id=$1 and status='ready'`, defenseID, selected.ID, mode, seconds, wheelSize, entityMode); e != nil {
+	if _, e = tx.Exec(ctx, `update defenses set defense_mode='restore',hide_mutations='[]'::jsonb,hide_report=null,hide_error=null,selected_candidate_id=$2,selection_mode=$3,time_limit_seconds=$4,wheel_size=$5,entity_mode=$6,status='preparing' where id=$1 and status='ready'`, defenseID, selected.ID, mode, seconds, wheelSize, entityMode); e != nil {
 		return Defense{}, e
 	}
 	job, _ := domain.NewUUIDv7()
@@ -394,6 +406,25 @@ func (r *DefenseRepository) SourceAccess(ctx context.Context, actor, defenseID s
 		access.BodyEnd = *bodyEnd
 		access.MaskSelected = true
 	}
+	var raw []byte
+	if e = r.db.pool.QueryRow(ctx, `select d.defense_mode,d.hide_mutations,u.role='student' from defenses d join users u on u.id=$1 where d.id=$2`, actor, defenseID).Scan(&access.DefenseMode, &raw, &access.StudentView); e != nil {
+		return DefenseSourceAccess{}, e
+	}
+	if e = json.Unmarshal(raw, &access.HideMutations); e != nil {
+		return DefenseSourceAccess{}, e
+	}
+	if access.DefenseMode == "hide_seek" {
+		access.MaskSelected = false
+	}
+	if access.StudentView && access.DefenseMode != "hide_seek" {
+		var hidden bool
+		if e = r.db.pool.QueryRow(ctx, `select exists(select 1 from defenses d join defenses other on other.submission_version_id=d.submission_version_id where d.id=$1 and other.defense_mode='hide_seek')`, defenseID).Scan(&hidden); e != nil {
+			return DefenseSourceAccess{}, e
+		}
+		if hidden {
+			return DefenseSourceAccess{}, appauth.ErrForbidden
+		}
+	}
 	return access, nil
 }
 func (r *DefenseRepository) SaveDraft(ctx context.Context, actor, id, answer string, version int64) (int64, time.Time, error) {
@@ -493,19 +524,21 @@ func jsonRaw(v []byte) any {
 }
 
 type Lease struct {
-	JobID               string            `json:"job_id"`
-	Kind                string            `json:"kind"`
-	DefenseID           string            `json:"defense_id"`
-	AttemptID           *string           `json:"attempt_id"`
-	LeaseToken          string            `json:"lease_token"`
-	LeaseExpiresAt      time.Time         `json:"lease_expires_at"`
-	SessionID           string            `json:"session_id"`
-	SubmissionObjectKey string            `json:"submission_object_key"`
-	Seed                string            `json:"seed"`
-	TopN                int               `json:"top_n"`
-	SelectedIndex       *int              `json:"selected_index,omitempty"`
-	Answer              *string           `json:"answer"`
-	SelectedFunction    *SelectedFunction `json:"selected_function,omitempty"`
+	DefenseMode         string              `json:"defense_mode"`
+	HideMutations       []hideseek.Mutation `json:"hide_mutations,omitempty"`
+	JobID               string              `json:"job_id"`
+	Kind                string              `json:"kind"`
+	DefenseID           string              `json:"defense_id"`
+	AttemptID           *string             `json:"attempt_id"`
+	LeaseToken          string              `json:"lease_token"`
+	LeaseExpiresAt      time.Time           `json:"lease_expires_at"`
+	SessionID           string              `json:"session_id"`
+	SubmissionObjectKey string              `json:"submission_object_key"`
+	Seed                string              `json:"seed"`
+	TopN                int                 `json:"top_n"`
+	SelectedIndex       *int                `json:"selected_index,omitempty"`
+	Answer              *string             `json:"answer"`
+	SelectedFunction    *SelectedFunction   `json:"selected_function,omitempty"`
 }
 type SelectedFunction struct {
 	FunctionName   string `json:"function_name"`
@@ -588,6 +621,16 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 	if e = tx.Commit(ctx); e != nil {
 		return Lease{}, e
 	}
+	var hideRaw []byte
+	if e = r.db.pool.QueryRow(ctx, `select defense_mode,hide_mutations from defenses where id=$1`, v.DefenseID).Scan(&v.DefenseMode, &hideRaw); e != nil {
+		return Lease{}, e
+	}
+	if e = json.Unmarshal(hideRaw, &v.HideMutations); e != nil {
+		return Lease{}, e
+	}
+	if v.DefenseMode == "hide_seek" {
+		return v, nil
+	}
 	if v.Kind == "check_attempt" {
 		var selected SelectedFunction
 		var digest []byte
@@ -629,13 +672,14 @@ type Candidate struct {
 	OriginalBodySHA256 string `json:"original_body_sha256"`
 }
 type Completion struct {
-	Outcome         string      `json:"outcome"`
-	Candidates      []Candidate `json:"candidates"`
-	SelectedIndex   int         `json:"selected_index"`
-	MaskedSource    string      `json:"masked_source"`
-	ConfigureResult any         `json:"configure_result"`
-	BuildResult     any         `json:"build_result"`
-	CTestResult     any         `json:"ctest_result"`
+	HideValidation  *HideValidation `json:"hide_validation,omitempty"`
+	Outcome         string          `json:"outcome"`
+	Candidates      []Candidate     `json:"candidates"`
+	SelectedIndex   int             `json:"selected_index"`
+	MaskedSource    string          `json:"masked_source"`
+	ConfigureResult any             `json:"configure_result"`
+	BuildResult     any             `json:"build_result"`
+	CTestResult     any             `json:"ctest_result"`
 }
 
 func (r *DefenseRepository) Heartbeat(ctx context.Context, job, token string) error {
@@ -672,7 +716,16 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 		return nil, e
 	}
 	if kind == "prepare_defense" {
-		if input.Outcome == "error" {
+		var defenseMode string
+		if e = tx.QueryRow(ctx, `select defense_mode from defenses where id=$1`, defense).Scan(&defenseMode); e != nil {
+			return nil, e
+		}
+		if defenseMode == "hide_seek" {
+			e = completeHide(ctx, tx, defense, input)
+			if e != nil {
+				return nil, e
+			}
+		} else if input.Outcome == "error" {
 			_, e = tx.Exec(ctx, `update defenses set status='error',terminal_reason='worker preparation failed' where id=$1 and status='preparing'`, defense)
 			if e != nil {
 				return nil, e

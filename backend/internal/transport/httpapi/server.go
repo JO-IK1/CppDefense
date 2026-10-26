@@ -89,6 +89,7 @@ func New(dependencies Dependencies) http.Handler {
 		mux.HandleFunc("GET /api/v1/defenses/{defense_id}", defenseHandler.get)
 		mux.HandleFunc("GET /api/v1/teacher/defenses/pending", defenseHandler.pendingConfiguration)
 		mux.HandleFunc("POST /api/v1/defenses/{defense_id}/configure", defenseHandler.configure)
+		mux.HandleFunc("POST /api/v1/defenses/{defense_id}/hide/configure", defenseHandler.configureHide)
 		if dependencies.Files != nil {
 			mux.HandleFunc("GET /api/v1/defenses/{defense_id}/repository", defenseHandler.repositoryFiles)
 			mux.HandleFunc("GET /api/v1/defenses/{defense_id}/repository/file", defenseHandler.repositoryFile)

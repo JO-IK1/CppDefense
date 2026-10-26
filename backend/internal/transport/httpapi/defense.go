@@ -15,6 +15,7 @@ import (
 
 	"github.com/JO-IK1/CppDefense/backend/internal/application/audit"
 	appauth "github.com/JO-IK1/CppDefense/backend/internal/application/auth"
+	"github.com/JO-IK1/CppDefense/backend/internal/application/hideseek"
 	appstorage "github.com/JO-IK1/CppDefense/backend/internal/application/storage"
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
 	"github.com/jackc/pgx/v5"
@@ -133,7 +134,7 @@ func (h *defenseHTTP) repositoryFiles(w http.ResponseWriter, r *http.Request) {
 		if file.FileInfo().IsDir() || !visibleRepositoryPath(file.Name) {
 			continue
 		}
-		items = append(items, map[string]any{"path": file.Name, "size": file.UncompressedSize64})
+		items = append(items, map[string]any{"path": file.Name, "size": file.UncompressedSize64, "editable": hideseek.Editable(file.Name)})
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
@@ -179,7 +180,23 @@ func (h *defenseHTTP) repositoryFile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		writeJSON(w, 200, map[string]any{"path": wanted, "content": string(content), "masked": access.MaskSelected && wanted == access.SelectedFile})
+		if access.DefenseMode == "hide_seek" && access.StudentView {
+			var mutations []hideseek.Mutation
+			for _, m := range access.HideMutations {
+				if m.Path == wanted {
+					mutations = append(mutations, m)
+				}
+			}
+			if len(mutations) > 0 {
+				changed, err := hideseek.Apply(mutations, map[string][]byte{wanted: content})
+				if err != nil {
+					h.fail(w, r, err)
+					return
+				}
+				content = changed[wanted]
+			}
+		}
+		writeJSON(w, 200, map[string]any{"path": wanted, "content": string(content), "masked": access.MaskSelected && wanted == access.SelectedFile, "editable": hideseek.Editable(wanted)})
 		return
 	}
 	writeProblem(w, r, 404, "NOT_FOUND", "Repository file was not found")
@@ -267,8 +284,12 @@ func (h *defenseHTTP) draft(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Answer string `json:"answer"`
 	}
-	if e != nil || !decodeJSON(w, r, &in) || len(in.Answer) > 1<<20 {
+	if e != nil || !decodeJSONLimit(w, r, &in, 2<<20) || len(in.Answer) > 1<<20 {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Draft is invalid")
+		return
+	}
+	if err := h.validateAnswer(r, a.ID, r.PathValue("defense_id"), in.Answer); err != nil {
+		writeProblem(w, r, 422, "INVALID_PROJECT_EDITS", err.Error())
 		return
 	}
 	next, saved, e := h.repository.SaveDraft(r.Context(), a.ID, r.PathValue("defense_id"), in.Answer, version)
@@ -286,8 +307,12 @@ func (h *defenseHTTP) attempt(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Answer string `json:"answer"`
 	}
-	if !decodeJSON(w, r, &in) || len(in.Answer) > 1<<20 || !validIdempotencyKey(r) {
+	if !decodeJSONLimit(w, r, &in, 2<<20) || len(in.Answer) > 1<<20 || !validIdempotencyKey(r) {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Attempt is invalid")
+		return
+	}
+	if err := h.validateAnswer(r, a.ID, r.PathValue("defense_id"), in.Answer); err != nil {
+		writeProblem(w, r, 422, "INVALID_PROJECT_EDITS", err.Error())
 		return
 	}
 	v, e := h.repository.Attempt(r.Context(), a.ID, r.PathValue("defense_id"), r.Header.Get("Idempotency-Key"), in.Answer)

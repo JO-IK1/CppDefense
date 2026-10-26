@@ -22,9 +22,10 @@ type commandResult struct {
 }
 
 type sandboxResults struct {
-	Configure commandResult
-	Build     commandResult
-	CTest     commandResult
+	InfrastructureError bool          `json:"-"`
+	Configure           commandResult `json:"configure"`
+	Build               commandResult `json:"build"`
+	CTest               commandResult `json:"ctest"`
 }
 
 func (r sandboxResults) OK() bool {
@@ -169,7 +170,7 @@ func parseSandboxResults(output string, containerExitCode int, timedOut bool) sa
 		fallback.Log = "Sandbox завершился без результата"
 	}
 	if len(parsed) == 0 {
-		return sandboxResults{Configure: fallback, Build: fallback, CTest: fallback}
+		return sandboxResults{Configure: fallback, Build: fallback, CTest: fallback, InfrastructureError: !timedOut}
 	}
 
 	skipped := func(after string) commandResult {
