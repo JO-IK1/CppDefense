@@ -749,6 +749,41 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Defense' }
+  /api/v1/defenses/{defense_id}/hide/configure:
+    post:
+      tags: [Defenses]
+      operationId: configureHideSeekDefense
+      x-roles: [teacher, admin]
+      description: Validates original and mutated projects before starting the timer. Failed validation returns the defense to teacher configuration.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/DefenseId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [time_limit_seconds, mutations]
+              properties:
+                time_limit_seconds: { type: integer, minimum: 60, maximum: 1800 }
+                mutations:
+                  type: array
+                  minItems: 1
+                  maxItems: 5
+                  items: { $ref: '#/components/schemas/HideMutation' }
+      responses:
+        '202':
+          description: Validation queued; timer has not started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Defense' }
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /api/v1/defenses/{defense_id}/repository:
     get:
       tags: [Defenses]
@@ -798,6 +833,7 @@ paths:
                   path: { type: string }
                   content: { type: string, maxLength: 2097152 }
                   masked: { type: boolean }
+                  editable: { type: boolean, description: Whether this path can be edited in hide-and-seek mode }
   /api/v1/defenses/{defense_id}/attempts:
     post:
       tags: [Defenses]
@@ -1811,6 +1847,17 @@ components:
       additionalProperties: false
       required: [id, session_id, submission_version_id, student_login, lab_code, lab_name, status, preparation_stage, seed, time_limit_seconds, wheel_size, entity_mode, selection_mode, current_draft, draft_version, wheel_candidates, created_at]
       properties:
+        defense_mode: { enum: [restore, hide_seek] }
+        error_count: { type: integer, minimum: 0, maximum: 5 }
+        hide_report:
+          description: Validation report with logs, returned only to teachers and administrators
+          $ref: '#/components/schemas/HideValidation'
+        preparation_error: { type: string }
+        teacher_mutations:
+          type: array
+          description: Teacher-only configuration; absent from student responses
+          maxItems: 5
+          items: { $ref: '#/components/schemas/HideMutation' }
         id:
           $ref: '#/components/schemas/Uuid'
         session_id:
@@ -1823,7 +1870,7 @@ components:
         status:
           $ref: '#/components/schemas/DefenseState'
         preparation_stage:
-          enum: [analyzing_project, waiting_for_teacher, materializing_challenge, ready, passed, failed, expired, cancelled, error]
+          enum: [analyzing_project, waiting_for_teacher, materializing_challenge, validating_hide_seek, ready, passed, failed, expired, cancelled, error]
         seed:
           type: string
           pattern: '^(0|[1-9][0-9]{0,19})$'
@@ -1951,6 +1998,12 @@ components:
       additionalProperties: false
       required: [job_id, kind, defense_id, lease_token, lease_expires_at, session_id, submission_object_key, seed, top_n]
       properties:
+        defense_mode: { enum: [restore, hide_seek] }
+        hide_mutations:
+          type: array
+          maxItems: 5
+          description: Private runner payload; never returned by the student defense endpoint
+          items: { $ref: '#/components/schemas/HideMutation' }
         job_id:
           $ref: '#/components/schemas/Uuid'
         kind:
@@ -2057,6 +2110,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        hide_validation: { $ref: '#/components/schemas/HideValidation' }
         outcome:
           enum: [passed, failed, error, '']
         candidates:
@@ -2073,6 +2127,25 @@ components:
         configure_result: {}
         build_result: {}
         ctest_result: {}
+    HideMutation:
+      type: object
+      additionalProperties: false
+      required: [path, start, before, after]
+      properties:
+        path: { type: string }
+        start: { type: integer, minimum: 0, description: Byte offset in original UTF-8 source }
+        before: { type: string, minLength: 1, maxLength: 16384 }
+        after: { type: string, maxLength: 16384 }
+    HideValidation:
+      type: object
+      additionalProperties: false
+      required: [valid, message]
+      properties:
+        valid: { type: boolean }
+        message: { type: string }
+        baseline: {}
+        mutated: {}
+        restored: {}
     PreparedCandidate:
       type: object
       additionalProperties: false

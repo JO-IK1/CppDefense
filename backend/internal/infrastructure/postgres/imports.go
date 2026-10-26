@@ -414,6 +414,13 @@ func (r *ImportRepository) ListReviewPending(ctx context.Context, actor, groupID
 }
 
 func (r *ImportRepository) OriginalObject(ctx context.Context, actor, importID string) (appstorage.Key, string, error) {
+	var hidden bool
+	if err := r.db.pool.QueryRow(ctx, `select exists(select 1 from users u join submission_versions sv on sv.original_import_id=$2 join defenses d on d.submission_version_id=sv.id where u.id=$1 and u.role='student' and d.defense_mode='hide_seek')`, actor, importID).Scan(&hidden); err != nil {
+		return appstorage.Key{}, "", err
+	}
+	if hidden {
+		return appstorage.Key{}, "", appauth.ErrForbidden
+	}
 	if _, err := r.Get(ctx, actor, importID); err != nil {
 		return appstorage.Key{}, "", err
 	}

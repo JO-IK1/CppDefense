@@ -98,7 +98,7 @@ func (repository *StorageRepository) ReadableSubmissionKey(ctx context.Context, 
 		join users actor on actor.id = $1 and actor.status = 'active'
 		where sv.id = $2 and (
 			actor.role = 'admin'
-			or (actor.role = 'student' and sr.user_id = actor.id)
+			or (actor.role = 'student' and sr.user_id = actor.id and not exists(select 1 from defenses d where d.submission_version_id=sv.id and d.defense_mode='hide_seek'))
 			or (actor.role = 'teacher' and exists (
 				select 1 from group_teachers gt where gt.group_id = sr.group_id and gt.teacher_user_id = actor.id
 			))
