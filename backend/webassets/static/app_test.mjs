@@ -5,6 +5,18 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("./app.js", import.meta.url), "utf8");
 
+test("timings show measured stages and distinguish missing measurements", () => {
+  const context = browserContext(null);
+  context.document.createElement = tag => ({tag, children: [], append(...children) {this.children.push(...children);}});
+  vm.runInContext(source, context);
+  const report = vm.runInContext("createTimingReport({queue_ms: 12, compile_ms: null, snapshot_hit: true})", context);
+  const text = item => [item.textContent || "", ...(item.children || []).map(text)].join(" ");
+  assert.match(text(report), /12\.0 мс/);
+  assert.match(text(report), /Нет замера/);
+  assert.match(text(report), /отдельной рабочей копии/);
+  assert.equal(vm.runInContext("createTimingReport(null)", context), null);
+});
+
 test("reference acceptance is explicit in student and teacher reports and never fakes stages", () => {
   const context = browserContext(null);
   context.document.createElement = tag => ({tag, children: [], append(...children) {this.children.push(...children);}});
