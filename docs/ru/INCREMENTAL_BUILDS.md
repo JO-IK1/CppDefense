@@ -118,9 +118,14 @@ PostgreSQL на свободный runner slot. HTTP write timeout должен 
 
 ## Проверка и развёртывание
 
-Обычный GitHub deploy обновляет backend, Go runner и образ sandbox. Установщик
-копирует timing/GTest helpers в build context. Применяются миграции 000015/000016.
+Обычный GitHub deploy обновляет backend, Go runner и образ sandbox. Образ теперь
+собирается и проверяется в GitHub Actions, затем передаётся сжатым Docker-архивом
+по SSH. VPS не выполняет `apt-get` или `podman build` для sandbox. Установщик
+проверяет SHA-256 архива, immutable image ID, платформу и пробный запуск в Podman
+пользователя runner до переключения production-тега. Применяются миграции 000015/000016.
 Новых секретов не требуется. Действующий VPS вручную не изменялся.
+
+Подробности обновления установщика и проверки: [доставка готового образа](PREBUILT_SANDBOX_DEPLOY.md).
 
 Добавлен отдельный CI workflow с настоящими Linux-контейнерами, не имитацией
 сборки. Локальный запуск:
