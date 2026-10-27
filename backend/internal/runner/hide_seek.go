@@ -83,13 +83,17 @@ func (a *agent) validateHide(parent, ctx context.Context, project string, lease 
 	if err != nil {
 		return finish(err.Error())
 	}
+	image, policy, envErr := a.referenceEnvironment(ctx)
+	if envErr != nil {
+		image = a.config.Image
+	}
 	run := func() sandboxResults {
 		if err := makeSandboxReadable(project); err != nil {
 			failure := commandResult{ExitCode: -1, Log: err.Error()}
 			return sandboxResults{Configure: failure, Build: failure, CTest: failure}
 		}
 		defer restoreSandboxOwnerAccess(project)
-		return runSandboxCached(ctx, a.config.Runtime, a.config.Image, project, lease.SessionID)
+		return runSandboxCached(ctx, a.config.Runtime, image, project, lease.SessionID)
 	}
 	baseline := run()
 	report.Baseline = baseline
@@ -114,6 +118,9 @@ func (a *agent) validateHide(parent, ctx context.Context, project string, lease 
 	report.Restored = restored
 	if !restored.OK() {
 		return finish("Возврат исходного кода не восстановил успешные тесты. Проверьте стабильность тестовой среды.")
+	}
+	if envErr == nil {
+		a.rememberReference(project, lease, image, policy)
 	}
 	report.Valid = true
 	report.Message = "Задание проверено: оригинал проходит тесты, изменённый проект собирается и проваливает тесты."
@@ -142,6 +149,11 @@ func (a *agent) checkHide(parent, ctx context.Context, project string, lease pos
 	}
 	for name, content := range edits {
 		changed[name] = []byte(content)
+	}
+	if sameSources(original, changed) {
+		if accepted, err := a.acceptReference(parent, ctx, project, lease); accepted || err != nil {
+			return err
+		}
 	}
 	if err = writeHideFiles(project, changed); err != nil {
 		return failure(err)
