@@ -1975,6 +1975,8 @@ components:
       additionalProperties: false
       required: [id, defense_id, attempt_no, outcome, accepted_at]
       properties:
+        reference_result:
+          $ref: '#/components/schemas/ReferenceResult'
         id:
           $ref: '#/components/schemas/Uuid'
         defense_id:
@@ -2110,6 +2112,8 @@ components:
       type: object
       additionalProperties: false
       properties:
+        reference_result:
+          $ref: '#/components/schemas/ReferenceResult'
         hide_validation: { $ref: '#/components/schemas/HideValidation' }
         outcome:
           enum: [passed, failed, error, '']
@@ -2127,6 +2131,16 @@ components:
         configure_result: {}
         build_result: {}
         ctest_result: {}
+    ReferenceResult:
+      type: object
+      additionalProperties: false
+      description: Exact match to a previously tested original. Build/test result fields are null; no new sandbox run is claimed.
+      required: [project_sha256, image_id, policy_sha256, verified_at]
+      properties:
+        project_sha256: { $ref: '#/components/schemas/Sha256' }
+        image_id: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        policy_sha256: { $ref: '#/components/schemas/Sha256' }
+        verified_at: { type: string, format: date-time }
     HideMutation:
       type: object
       additionalProperties: false

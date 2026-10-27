@@ -99,7 +99,7 @@ if [ -n "$cache_args" ]; then ccache --show-stats >>/tmp/cppdefense-build.log 2>
 emit_stage build "$build_code"
 if [ "$build_code" -ne 0 ]; then exit 0; fi
 
-ctest --test-dir /build --output-on-failure >/tmp/cppdefense-ctest.log 2>&1
+ctest --test-dir /build --output-on-failure --no-tests=error >/tmp/cppdefense-ctest.log 2>&1
 ctest_code=$?
 emit_stage ctest "$ctest_code"
 exit 0
@@ -109,9 +109,13 @@ func runSandbox(ctx context.Context, runtime, image, project string) sandboxResu
 	return runSandboxCached(ctx, runtime, image, project, "")
 }
 
+func sandboxArguments(image, project string) []string {
+	return []string{"run", "--rm", "--network", "none", "--cpus", "1.0", "--memory", "512m", "--memory-swap", "512m", "--pids-limit", "128", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=256m", "--tmpfs", "/build:rw,nosuid,nodev,size=768m", "--user", "65532:65532", "-v", project + ":/workspace:ro", image, "sh", "-lc", sandboxScript}
+}
+
 func runSandboxCached(ctx context.Context, runtime, image, project, sessionID string) sandboxResults {
 	absolute, _ := filepath.Abs(project)
-	args := []string{"run", "--rm", "--network", "none", "--cpus", "1.0", "--memory", "512m", "--memory-swap", "512m", "--pids-limit", "128", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=256m", "--tmpfs", "/build:rw,nosuid,nodev,size=768m", "--user", "65532:65532", "-v", absolute + ":/workspace:ro", image, "sh", "-lc", sandboxScript}
+	args := sandboxArguments(image, absolute)
 	if sessionID != "" && filepath.Base(runtime) == "podman" {
 		// Separate caches prevent one defense from poisoning another's compiler outputs.
 		digest := sha256.Sum256([]byte(image + "\x00" + sessionID))

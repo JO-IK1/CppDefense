@@ -17,9 +17,11 @@ import (
 )
 
 type agent struct {
-	config  config
-	client  *http.Client
-	storage appstorage.FileStorage
+	referenceMu sync.Mutex
+	references  map[string]postgres.ReferenceResult
+	config      config
+	client      *http.Client
+	storage     appstorage.FileStorage
 }
 
 // Run starts the runner agent and blocks until it receives a shutdown signal.
@@ -117,6 +119,13 @@ func (a *agent) execute(parent context.Context, lease postgres.Lease) error {
 }
 
 func (a *agent) prepare(parent, ctx context.Context, workspace string, lease postgres.Lease) error {
+	if lease.SelectedIndex != nil {
+		project := filepath.Join(workspace, lease.SessionID, "project")
+		_, results := a.verifyOriginal(ctx, project, lease)
+		if !results.OK() {
+			return a.complete(parent, lease, postgres.Completion{Outcome: "error", ConfigureResult: results.Configure, BuildResult: results.Build, CTestResult: results.CTest})
+		}
+	}
 	workerPayload := map[string]any{"project_root": "project", "top_n": lease.TopN, "seed": lease.Seed}
 	if lease.SelectedIndex != nil {
 		workerPayload["selected_index"] = *lease.SelectedIndex
@@ -132,6 +141,12 @@ func (a *agent) prepare(parent, ctx context.Context, workspace string, lease pos
 func (a *agent) check(parent, ctx context.Context, attempt, workspace string, lease postgres.Lease) error {
 	if lease.SelectedFunction == nil || lease.Answer == nil {
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error"})
+	}
+	project := filepath.Join(workspace, lease.SessionID, "project")
+	if restoreMatches(project, lease) {
+		if accepted, err := a.acceptReference(parent, ctx, project, lease); accepted || err != nil {
+			return err
+		}
 	}
 	payload := map[string]any{"protocol_version": "1.0", "request_id": lease.JobID, "session_id": lease.SessionID, "command": "materialize_attempt", "payload": map[string]any{"project_root": "project", "output_root": "attempt", "selected_function": lease.SelectedFunction, "answer": *lease.Answer}}
 	var response struct {

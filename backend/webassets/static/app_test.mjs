@@ -5,6 +5,22 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("./app.js", import.meta.url), "utf8");
 
+test("reference acceptance is explicit in student and teacher reports and never fakes stages", () => {
+  const context = browserContext(null);
+  context.document.createElement = tag => ({tag, children: [], append(...children) {this.children.push(...children);}});
+  vm.runInContext(source, context);
+  context.attempt = {outcome: "passed", attempt_no: 1, defense_id: "defense", accepted_at: "2026-10-27T10:00:00Z", reference_result: {image_id: "sha256:proof"}};
+  for (const compact of [false, true]) {
+    const report = vm.runInContext(`createAttemptReport(attempt, ${compact})`, context);
+    assert.equal(report.children.some(child => child.className === "attempt-stages"), false);
+    assert.match(report.children.map(child => child.textContent || "").join(" "), /совпал с проверенным оригиналом/);
+    assert.match(report.children.map(child => child.textContent || "").join(" "), /сборка и тесты не запускались/);
+  }
+  context.attempt = {...context.attempt, reference_result: undefined};
+  const regular = vm.runInContext("createAttemptReport(attempt)", context);
+  assert.equal(regular.children.find(child => child.className === "attempt-stages").children.length, 3);
+});
+
 test("hide-and-seek saves edits for multiple files without submitting protected files", () => {
   const answer = {value: "changed", addEventListener() {}};
   const context = browserContext(null, answer);

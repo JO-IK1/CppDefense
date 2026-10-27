@@ -20,6 +20,11 @@ import (
 // behavior without requiring Docker on developer computers.
 const fixtureRuntime = `#!/bin/sh
 set -eu
+if [ "$1" = image ]; then
+ printf 'sha256:%s\n' "${CPPDEFENSE_TEST_IMAGE_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+ exit 0
+fi
+if [ -n "${CPPDEFENSE_TEST_RUN_LOG:-}" ]; then printf 'run\n' >> "$CPPDEFENSE_TEST_RUN_LOG"; fi
 project=""
 for arg do
  case "$arg" in *:/workspace:ro) project="${arg%:/workspace:ro}" ;; esac
@@ -41,7 +46,7 @@ cmake --build "$work/build" > "$work/log" 2>&1 || code=$?
 emit build "$code"
 test "$code" -eq 0 || exit 0
 code=0
-ctest --test-dir "$work/build" --output-on-failure > "$work/log" 2>&1 || code=$?
+ctest --test-dir "$work/build" --output-on-failure --no-tests=error > "$work/log" 2>&1 || code=$?
 emit ctest "$code"
 `
 

@@ -86,15 +86,16 @@ type Challenge struct {
 	MaskedSource string `json:"masked_source"`
 }
 type Attempt struct {
-	ID              string     `json:"id"`
-	DefenseID       string     `json:"defense_id"`
-	AttemptNo       int        `json:"attempt_no"`
-	Outcome         string     `json:"outcome"`
-	AcceptedAt      time.Time  `json:"accepted_at"`
-	FinishedAt      *time.Time `json:"finished_at"`
-	ConfigureResult any        `json:"configure_result"`
-	BuildResult     any        `json:"build_result"`
-	CTestResult     any        `json:"ctest_result"`
+	ReferenceResult *ReferenceResult `json:"reference_result,omitempty"`
+	ID              string           `json:"id"`
+	DefenseID       string           `json:"defense_id"`
+	AttemptNo       int              `json:"attempt_no"`
+	Outcome         string           `json:"outcome"`
+	AcceptedAt      time.Time        `json:"accepted_at"`
+	FinishedAt      *time.Time       `json:"finished_at"`
+	ConfigureResult any              `json:"configure_result"`
+	BuildResult     any              `json:"build_result"`
+	CTestResult     any              `json:"ctest_result"`
 }
 
 func (r *DefenseRepository) Create(ctx context.Context, actor, submission, key string) (Defense, error) {
@@ -503,7 +504,7 @@ func (r *DefenseRepository) Attempt(ctx context.Context, actor, id, key, answer 
 func (r *DefenseRepository) GetAttempt(ctx context.Context, actor, id string) (Attempt, error) {
 	var v Attempt
 	var configure, build, ctest []byte
-	e := r.db.pool.QueryRow(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where a.id=$2 and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest)
+	e := r.db.pool.QueryRow(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result,a.reference_result from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where a.id=$2 and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult)
 	if e != nil {
 		return Attempt{}, appauth.ErrForbidden
 	}
@@ -672,14 +673,15 @@ type Candidate struct {
 	OriginalBodySHA256 string `json:"original_body_sha256"`
 }
 type Completion struct {
-	HideValidation  *HideValidation `json:"hide_validation,omitempty"`
-	Outcome         string          `json:"outcome"`
-	Candidates      []Candidate     `json:"candidates"`
-	SelectedIndex   int             `json:"selected_index"`
-	MaskedSource    string          `json:"masked_source"`
-	ConfigureResult any             `json:"configure_result"`
-	BuildResult     any             `json:"build_result"`
-	CTestResult     any             `json:"ctest_result"`
+	ReferenceResult *ReferenceResult `json:"reference_result,omitempty"`
+	HideValidation  *HideValidation  `json:"hide_validation,omitempty"`
+	Outcome         string           `json:"outcome"`
+	Candidates      []Candidate      `json:"candidates"`
+	SelectedIndex   int              `json:"selected_index"`
+	MaskedSource    string           `json:"masked_source"`
+	ConfigureResult any              `json:"configure_result"`
+	BuildResult     any              `json:"build_result"`
+	CTestResult     any              `json:"ctest_result"`
 }
 
 func (r *DefenseRepository) Heartbeat(ctx context.Context, job, token string) error {
@@ -777,10 +779,26 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 		if input.Outcome != "passed" && input.Outcome != "failed" && input.Outcome != "error" {
 			return nil, fmt.Errorf("invalid outcome")
 		}
+		if input.ReferenceResult != nil {
+			if input.Outcome != "passed" || input.ConfigureResult != nil || input.BuildResult != nil || input.CTestResult != nil {
+				return nil, fmt.Errorf("invalid reference completion")
+			}
+			if err := input.ReferenceResult.Validate(); err != nil {
+				return nil, err
+			}
+		}
 		configure, _ := json.Marshal(input.ConfigureResult)
 		build, _ := json.Marshal(input.BuildResult)
 		ctest, _ := json.Marshal(input.CTestResult)
-		_, e = tx.Exec(ctx, `update check_attempts set outcome=$2,configure_result=$3::jsonb,build_result=$4::jsonb,ctest_result=$5::jsonb,finished_at=clock_timestamp() where id=$1 and outcome='pending'`, *attempt, input.Outcome, string(configure), string(build), string(ctest))
+		// SQL NULL is intentional: reference acceptance did not run these stages.
+		var reference any
+		var configureValue, buildValue, ctestValue any = string(configure), string(build), string(ctest)
+		if input.ReferenceResult != nil {
+			raw, _ := json.Marshal(input.ReferenceResult)
+			reference = string(raw)
+			configureValue, buildValue, ctestValue = nil, nil, nil
+		}
+		_, e = tx.Exec(ctx, `update check_attempts set outcome=$2,configure_result=$3::jsonb,build_result=$4::jsonb,ctest_result=$5::jsonb,reference_result=$6::jsonb,finished_at=clock_timestamp() where id=$1 and outcome='pending'`, *attempt, input.Outcome, configureValue, buildValue, ctestValue, reference)
 		if e != nil {
 			return nil, e
 		}
@@ -815,7 +833,7 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 func (r *DefenseRepository) getAttemptUnscoped(ctx context.Context, id string) (Attempt, error) {
 	var v Attempt
 	var configure, build, ctest []byte
-	e := r.db.pool.QueryRow(ctx, `select id,defense_id,attempt_no,outcome::text,accepted_at,finished_at,configure_result,build_result,ctest_result from check_attempts where id=$1`, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest)
+	e := r.db.pool.QueryRow(ctx, `select id,defense_id,attempt_no,outcome::text,accepted_at,finished_at,configure_result,build_result,ctest_result,reference_result from check_attempts where id=$1`, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult)
 	v.ConfigureResult = jsonRaw(configure)
 	v.BuildResult = jsonRaw(build)
 	v.CTestResult = jsonRaw(ctest)
@@ -826,7 +844,7 @@ func (r *DefenseRepository) History(ctx context.Context, actor, groupID, student
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
-	rows, e := r.db.pool.Query(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where ($2='' or sr.group_id::text=$2) and ($3='' or sr.id::text=$3) and ($4='' or sv.lab_id::text=$4) and ($5='' or a.outcome::text=$5) and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id))) order by a.accepted_at desc limit $6`, actor, groupID, studentRecordID, labID, outcome, limit)
+	rows, e := r.db.pool.Query(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result,a.reference_result from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where ($2='' or sr.group_id::text=$2) and ($3='' or sr.id::text=$3) and ($4='' or sv.lab_id::text=$4) and ($5='' or a.outcome::text=$5) and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id))) order by a.accepted_at desc limit $6`, actor, groupID, studentRecordID, labID, outcome, limit)
 	if e != nil {
 		return nil, e
 	}
@@ -835,7 +853,7 @@ func (r *DefenseRepository) History(ctx context.Context, actor, groupID, student
 	for rows.Next() {
 		var v Attempt
 		var configure, build, ctest []byte
-		if e = rows.Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest); e != nil {
+		if e = rows.Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult); e != nil {
 			return nil, e
 		}
 		v.ConfigureResult = jsonRaw(configure)
