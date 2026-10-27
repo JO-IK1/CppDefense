@@ -83,6 +83,7 @@ func (a *agent) validateHide(parent, ctx context.Context, project string, lease 
 	if err != nil {
 		return finish(err.Error())
 	}
+	build, preparedBaseline := a.prepareBuildContext(ctx, project, lease)
 	image, policy, envErr := a.referenceEnvironment(ctx)
 	if envErr != nil {
 		image = a.config.Image
@@ -93,9 +94,17 @@ func (a *agent) validateHide(parent, ctx context.Context, project string, lease 
 			return sandboxResults{Configure: failure, Build: failure, CTest: failure}
 		}
 		defer restoreSandboxOwnerAccess(project)
+		if build != nil {
+			return a.runWithSnapshot(ctx, project, lease, build)
+		}
 		return runSandboxCached(ctx, a.config.Runtime, image, project, lease.SessionID)
 	}
-	baseline := run()
+	var baseline sandboxResults
+	if preparedBaseline != nil {
+		baseline = *preparedBaseline
+	} else {
+		baseline = run()
+	}
 	report.Baseline = baseline
 	if !baseline.OK() {
 		return finish("Исходная лабораторная не проходит сборку и тесты. Исправьте исходную работу до подготовки задания.")
@@ -155,6 +164,7 @@ func (a *agent) checkHide(parent, ctx context.Context, project string, lease pos
 			return err
 		}
 	}
+	build, _ := a.prepareBuildContext(ctx, project, lease)
 	if err = writeHideFiles(project, changed); err != nil {
 		return failure(err)
 	}
@@ -162,7 +172,7 @@ func (a *agent) checkHide(parent, ctx context.Context, project string, lease pos
 		return failure(err)
 	}
 	defer restoreSandboxOwnerAccess(project)
-	results := runSandboxCached(ctx, a.config.Runtime, a.config.Image, project, lease.SessionID)
+	results := a.runWithSnapshot(ctx, project, lease, build)
 	outcome := "failed"
 	if results.OK() {
 		outcome = "passed"

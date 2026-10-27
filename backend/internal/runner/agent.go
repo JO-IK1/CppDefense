@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 )
 
 type agent struct {
+	legacyLease atomic.Bool
 	referenceMu sync.Mutex
 	references  map[string]postgres.ReferenceResult
 	config      config
@@ -66,9 +68,6 @@ func (a *agent) workerLoop(ctx context.Context) {
 			continue
 		}
 		if !ok {
-			if !wait(ctx, a.config.Poll) {
-				return
-			}
 			continue
 		}
 		if err := a.execute(ctx, lease); err != nil {
@@ -78,6 +77,7 @@ func (a *agent) workerLoop(ctx context.Context) {
 }
 
 func (a *agent) execute(parent context.Context, lease postgres.Lease) error {
+	parent = context.WithValue(parent, timingKey{}, &jobProfile{started: time.Now(), value: postgres.JobTimings{QueueMS: float64(lease.QueueWaitMS)}})
 	ctx, cancel := context.WithTimeout(parent, a.config.Timeout)
 	defer cancel()
 	heartbeatDone := make(chan struct{})
@@ -97,12 +97,14 @@ func (a *agent) execute(parent context.Context, lease postgres.Lease) error {
 	if err != nil {
 		return err
 	}
+	downloadStart := time.Now()
 	reader, _, err := a.storage.Open(ctx, key)
 	if err != nil {
 		return err
 	}
 	err = extract(reader, project)
 	reader.Close()
+	addTiming(ctx, func(t *postgres.JobTimings) { t.DownloadMS += elapsedMS(downloadStart) })
 	if err != nil {
 		return err
 	}
@@ -132,7 +134,10 @@ func (a *agent) prepare(parent, ctx context.Context, workspace string, lease pos
 	}
 	payload := map[string]any{"protocol_version": "1.0", "request_id": lease.JobID, "session_id": lease.SessionID, "command": "prepare_defense", "payload": workerPayload}
 	var response prepareResponse
-	if err := runWorker(ctx, a.config.Worker, workspace, payload, &response); err != nil || response.Status != "ok" {
+	materializeStart := time.Now()
+	workerErr := runWorker(ctx, a.config.Worker, workspace, payload, &response)
+	addTiming(ctx, func(t *postgres.JobTimings) { t.MaterializeMS += elapsedMS(materializeStart) })
+	if workerErr != nil || response.Status != "ok" {
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error"})
 	}
 	return a.complete(parent, lease, postgres.Completion{Candidates: response.Result.Candidates, SelectedIndex: response.Result.SelectedIndex, MaskedSource: response.Result.MaskedSource})
@@ -148,11 +153,15 @@ func (a *agent) check(parent, ctx context.Context, attempt, workspace string, le
 			return err
 		}
 	}
+	build, _ := a.prepareBuildContext(ctx, project, lease)
 	payload := map[string]any{"protocol_version": "1.0", "request_id": lease.JobID, "session_id": lease.SessionID, "command": "materialize_attempt", "payload": map[string]any{"project_root": "project", "output_root": "attempt", "selected_function": lease.SelectedFunction, "answer": *lease.Answer}}
 	var response struct {
 		Status string `json:"status"`
 	}
-	if err := runWorker(ctx, a.config.Worker, workspace, payload, &response); err != nil || response.Status != "ok" {
+	materializeStart := time.Now()
+	workerErr := runWorker(ctx, a.config.Worker, workspace, payload, &response)
+	addTiming(ctx, func(t *postgres.JobTimings) { t.MaterializeMS += elapsedMS(materializeStart) })
+	if workerErr != nil || response.Status != "ok" {
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error"})
 	}
 	if err := makeSandboxReadable(attempt); err != nil {
@@ -160,10 +169,12 @@ func (a *agent) check(parent, ctx context.Context, attempt, workspace string, le
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error", ConfigureResult: result, BuildResult: result, CTestResult: result})
 	}
 	defer restoreSandboxOwnerAccess(attempt)
-	results := runSandboxCached(ctx, a.config.Runtime, a.config.Image, attempt, lease.SessionID)
+	results := a.runWithSnapshot(ctx, attempt, lease, build)
 	outcome := "failed"
 	if results.OK() {
 		outcome = "passed"
+	} else if results.InfrastructureError {
+		outcome = "error"
 	}
 	return a.complete(parent, lease, postgres.Completion{Outcome: outcome, ConfigureResult: results.Configure, BuildResult: results.Build, CTestResult: results.CTest})
 }
