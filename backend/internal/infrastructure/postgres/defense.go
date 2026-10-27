@@ -25,6 +25,7 @@ type DefenseRepository struct{ db *Database }
 func NewDefenseRepository(db *Database) *DefenseRepository { return &DefenseRepository{db: db} }
 
 type Defense struct {
+	PreparationTimings  *JobTimings         `json:"preparation_timings,omitempty"`
 	DefenseMode         string              `json:"defense_mode"`
 	ErrorCount          int                 `json:"error_count"`
 	HideReport          any                 `json:"hide_report,omitempty"`
@@ -86,6 +87,7 @@ type Challenge struct {
 	MaskedSource string `json:"masked_source"`
 }
 type Attempt struct {
+	Timings         *JobTimings      `json:"timings,omitempty"`
 	ReferenceResult *ReferenceResult `json:"reference_result,omitempty"`
 	ID              string           `json:"id"`
 	DefenseID       string           `json:"defense_id"`
@@ -306,7 +308,7 @@ func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mod
 			return Defense{}, e
 		}
 	}
-	if _, e = tx.Exec(ctx, `update defenses set defense_mode='restore',hide_mutations='[]'::jsonb,hide_report=null,hide_error=null,selected_candidate_id=$2,selection_mode=$3,time_limit_seconds=$4,wheel_size=$5,entity_mode=$6,status='preparing' where id=$1 and status='ready'`, defenseID, selected.ID, mode, seconds, wheelSize, entityMode); e != nil {
+	if _, e = tx.Exec(ctx, `update defenses set defense_mode='restore',hide_mutations='[]'::jsonb,hide_report=null,hide_error=null,preparation_timings=null,selected_candidate_id=$2,selection_mode=$3,time_limit_seconds=$4,wheel_size=$5,entity_mode=$6,status='preparing' where id=$1 and status='ready'`, defenseID, selected.ID, mode, seconds, wheelSize, entityMode); e != nil {
 		return Defense{}, e
 	}
 	job, _ := domain.NewUUIDv7()
@@ -504,7 +506,7 @@ func (r *DefenseRepository) Attempt(ctx context.Context, actor, id, key, answer 
 func (r *DefenseRepository) GetAttempt(ctx context.Context, actor, id string) (Attempt, error) {
 	var v Attempt
 	var configure, build, ctest []byte
-	e := r.db.pool.QueryRow(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result,a.reference_result from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where a.id=$2 and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult)
+	e := r.db.pool.QueryRow(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result,a.reference_result,a.timings from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where a.id=$2 and (u.role='admin' or (u.role='student' and sr.user_id=u.id) or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id)))`, actor, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult, &v.Timings)
 	if e != nil {
 		return Attempt{}, appauth.ErrForbidden
 	}
@@ -525,6 +527,7 @@ func jsonRaw(v []byte) any {
 }
 
 type Lease struct {
+	QueueWaitMS         int64               `json:"queue_wait_ms"`
 	DefenseMode         string              `json:"defense_mode"`
 	HideMutations       []hideseek.Mutation `json:"hide_mutations,omitempty"`
 	JobID               string              `json:"job_id"`
@@ -593,7 +596,7 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 		}
 	}
 	var v Lease
-	e = tx.QueryRow(ctx, `select j.id,j.kind::text,j.defense_id,j.check_attempt_id,d.session_id,sv.normalized_object_key,d.seed::text,coalesce(d.wheel_size,12),a.answer from runner_jobs j join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=d.submission_version_id left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() order by j.priority desc,j.created_at for update of j skip locked limit 1`).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer)
+	e = tx.QueryRow(ctx, `select j.id,j.kind::text,j.defense_id,j.check_attempt_id,d.session_id,sv.normalized_object_key,d.seed::text,coalesce(d.wheel_size,12),a.answer,greatest(0,extract(epoch from (statement_timestamp()-greatest(j.created_at,j.available_at)))*1000)::bigint from runner_jobs j join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=d.submission_version_id left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() order by j.priority desc,j.created_at for update of j skip locked limit 1`).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer, &v.QueueWaitMS)
 	if e == pgx.ErrNoRows {
 		if commitErr := tx.Commit(ctx); commitErr != nil {
 			return Lease{}, commitErr
@@ -673,6 +676,7 @@ type Candidate struct {
 	OriginalBodySHA256 string `json:"original_body_sha256"`
 }
 type Completion struct {
+	Timings         *JobTimings      `json:"timings,omitempty"`
 	ReferenceResult *ReferenceResult `json:"reference_result,omitempty"`
 	HideValidation  *HideValidation  `json:"hide_validation,omitempty"`
 	Outcome         string           `json:"outcome"`
@@ -718,6 +722,15 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 		return nil, e
 	}
 	if kind == "prepare_defense" {
+		if input.Timings != nil {
+			if err := input.Timings.Validate(); err != nil {
+				return nil, err
+			}
+			raw, _ := json.Marshal(input.Timings)
+			if _, err := tx.Exec(ctx, "update defenses set preparation_timings=$2::jsonb where id=$1", defense, string(raw)); err != nil {
+				return nil, err
+			}
+		}
 		var defenseMode string
 		if e = tx.QueryRow(ctx, `select defense_mode from defenses where id=$1`, defense).Scan(&defenseMode); e != nil {
 			return nil, e
@@ -792,13 +805,21 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 		ctest, _ := json.Marshal(input.CTestResult)
 		// SQL NULL is intentional: reference acceptance did not run these stages.
 		var reference any
+		var timing any
+		if input.Timings != nil {
+			if err := input.Timings.Validate(); err != nil {
+				return nil, err
+			}
+			raw, _ := json.Marshal(input.Timings)
+			timing = string(raw)
+		}
 		var configureValue, buildValue, ctestValue any = string(configure), string(build), string(ctest)
 		if input.ReferenceResult != nil {
 			raw, _ := json.Marshal(input.ReferenceResult)
 			reference = string(raw)
 			configureValue, buildValue, ctestValue = nil, nil, nil
 		}
-		_, e = tx.Exec(ctx, `update check_attempts set outcome=$2,configure_result=$3::jsonb,build_result=$4::jsonb,ctest_result=$5::jsonb,reference_result=$6::jsonb,finished_at=clock_timestamp() where id=$1 and outcome='pending'`, *attempt, input.Outcome, configureValue, buildValue, ctestValue, reference)
+		_, e = tx.Exec(ctx, `update check_attempts set outcome=$2,configure_result=$3::jsonb,build_result=$4::jsonb,ctest_result=$5::jsonb,reference_result=$6::jsonb,timings=$7::jsonb,finished_at=clock_timestamp() where id=$1 and outcome='pending'`, *attempt, input.Outcome, configureValue, buildValue, ctestValue, reference, timing)
 		if e != nil {
 			return nil, e
 		}
@@ -833,7 +854,7 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 func (r *DefenseRepository) getAttemptUnscoped(ctx context.Context, id string) (Attempt, error) {
 	var v Attempt
 	var configure, build, ctest []byte
-	e := r.db.pool.QueryRow(ctx, `select id,defense_id,attempt_no,outcome::text,accepted_at,finished_at,configure_result,build_result,ctest_result,reference_result from check_attempts where id=$1`, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult)
+	e := r.db.pool.QueryRow(ctx, `select id,defense_id,attempt_no,outcome::text,accepted_at,finished_at,configure_result,build_result,ctest_result,reference_result,timings from check_attempts where id=$1`, id).Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult, &v.Timings)
 	v.ConfigureResult = jsonRaw(configure)
 	v.BuildResult = jsonRaw(build)
 	v.CTestResult = jsonRaw(ctest)
@@ -844,7 +865,7 @@ func (r *DefenseRepository) History(ctx context.Context, actor, groupID, student
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
-	rows, e := r.db.pool.Query(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result,a.reference_result from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where ($2='' or sr.group_id::text=$2) and ($3='' or sr.id::text=$3) and ($4='' or sv.lab_id::text=$4) and ($5='' or a.outcome::text=$5) and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id))) order by a.accepted_at desc limit $6`, actor, groupID, studentRecordID, labID, outcome, limit)
+	rows, e := r.db.pool.Query(ctx, `select a.id,a.defense_id,a.attempt_no,a.outcome::text,a.accepted_at,a.finished_at,a.configure_result,a.build_result,a.ctest_result,a.reference_result,a.timings from check_attempts a join defenses d on d.id=a.defense_id join submission_versions sv on sv.id=d.submission_version_id join student_records sr on sr.id=sv.student_record_id join users u on u.id=$1 and u.status='active' where ($2='' or sr.group_id::text=$2) and ($3='' or sr.id::text=$3) and ($4='' or sv.lab_id::text=$4) and ($5='' or a.outcome::text=$5) and (u.role='admin' or (u.role='teacher' and exists(select 1 from group_teachers gt where gt.group_id=sr.group_id and gt.teacher_user_id=u.id))) order by a.accepted_at desc limit $6`, actor, groupID, studentRecordID, labID, outcome, limit)
 	if e != nil {
 		return nil, e
 	}
@@ -853,7 +874,7 @@ func (r *DefenseRepository) History(ctx context.Context, actor, groupID, student
 	for rows.Next() {
 		var v Attempt
 		var configure, build, ctest []byte
-		if e = rows.Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult); e != nil {
+		if e = rows.Scan(&v.ID, &v.DefenseID, &v.AttemptNo, &v.Outcome, &v.AcceptedAt, &v.FinishedAt, &configure, &build, &ctest, &v.ReferenceResult, &v.Timings); e != nil {
 			return nil, e
 		}
 		v.ConfigureResult = jsonRaw(configure)

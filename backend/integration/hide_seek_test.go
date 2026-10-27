@@ -21,7 +21,16 @@ func TestHideSeekLifecycleAndOriginalAccess(t *testing.T) {
 }
 
 func testHideSeekLifecycle(t *testing.T, useReference bool) {
-	db := database(t)
+	testHideSeekLifecycleWithWait(t, useReference, false)
+}
+
+func testHideSeekLifecycleWithWait(t *testing.T, useReference, withWait bool) {
+	var db *postgres.Database
+	if withWait {
+		db = isolatedDatabase(t)
+	} else {
+		db = database(t)
+	}
 	ctx := context.Background()
 	uuid := func() string {
 		v, e := domain.NewUUIDv7()
@@ -96,11 +105,54 @@ func testHideSeekLifecycle(t *testing.T, useReference bool) {
 	if v.Status != "ready" || v.DeadlineAt != nil || v.HideReport == nil {
 		t.Fatalf("invalid task started: %#v", v)
 	}
+	type leasedResult struct {
+		value postgres.Lease
+		err   error
+	}
+	waiting := make(chan leasedResult, 1)
+	if withWait {
+		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		go func() {
+			value, err := r.LeaseWaiting(waitCtx, runner, 1, hash[:], 5*time.Second)
+			waiting <- leasedResult{value, err}
+		}()
+		until := time.Now().Add(3 * time.Second)
+		for {
+			var count int
+			if err := db.Pool().QueryRow(ctx, "select count(*) from pg_stat_activity where application_name='cppdefense-runner-wait' and state='idle'").Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count > 0 {
+				break
+			}
+			if time.Now().After(until) {
+				t.Fatal("long poll did not subscribe")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	queuedAt := time.Now()
 	if _, e = r.ConfigureHide(ctx, teacher, defense, 900, changes); e != nil {
 		t.Fatal(e)
 	}
-	job = lease()
-	completion := postgres.Completion{HideValidation: &postgres.HideValidation{Valid: true, Message: "validated"}}
+	if withWait {
+		select {
+		case result := <-waiting:
+			if result.err != nil || result.value.DefenseID != defense {
+				t.Fatalf("notified lease: %#v %v", result.value, result.err)
+			}
+			job = result.value
+			if time.Since(queuedAt) > 800*time.Millisecond {
+				t.Fatal("job waited for polling instead of notification")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("committed insertion did not wake runner")
+		}
+	} else {
+		job = lease()
+	}
+	completion := postgres.Completion{HideValidation: &postgres.HideValidation{Valid: true, Message: "validated"}, Timings: &postgres.JobTimings{TotalMS: 123, ConfigureMS: 17, BuildMS: 80, TestMS: 10}}
 	if _, e = r.Complete(ctx, job.JobID, job.LeaseToken, completion); e != nil {
 		t.Fatal(e)
 	}
@@ -110,6 +162,9 @@ func testHideSeekLifecycle(t *testing.T, useReference bool) {
 	}
 	if v.Status != "active" || v.StartedAt == nil || v.DeadlineAt == nil || v.HideReport != nil || len(v.TeacherMutations) != 0 || v.Challenge != nil || v.SelectedCandidateID != nil || len(v.WheelCandidates) != 0 {
 		t.Fatalf("student view leaks or invalid state: %#v", v)
+	}
+	if v.PreparationTimings == nil || v.PreparationTimings.ConfigureMS != 17 {
+		t.Fatalf("preparation timings lost: %#v", v.PreparationTimings)
 	}
 	started := *v.StartedAt
 	if _, e = r.Complete(ctx, job.JobID, job.LeaseToken, completion); e != nil {
@@ -164,12 +219,16 @@ func testHideSeekLifecycle(t *testing.T, useReference bool) {
 			}
 			result = postgres.Completion{Outcome: "passed", ReferenceResult: proof}
 		}
+		result.Timings = &postgres.JobTimings{QueueMS: 5, BuildMS: 50, TestMS: 9, TotalMS: 100}
 		if _, e = r.Complete(ctx, job.JobID, job.LeaseToken, result); e != nil {
 			t.Fatal(e)
 		}
 		got, e := r.GetAttempt(ctx, student, attempt.ID)
 		if e != nil || got.Outcome != outcome {
 			t.Fatalf("attempt: %#v %v", got, e)
+		}
+		if got.Timings == nil || got.Timings.QueueMS != 5 {
+			t.Fatalf("attempt timings lost: %#v", got.Timings)
 		}
 		if useReference && outcome == "passed" {
 			if got.ReferenceResult == nil || got.ConfigureResult != nil || got.BuildResult != nil || got.CTestResult != nil {

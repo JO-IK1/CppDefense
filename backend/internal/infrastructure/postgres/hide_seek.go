@@ -14,7 +14,7 @@ import (
 func (r *DefenseRepository) hideView(ctx context.Context, actor string, value *Defense) error {
 	var report, mutations []byte
 	var teacher bool
-	if err := r.db.pool.QueryRow(ctx, `select d.defense_mode,jsonb_array_length(d.hide_mutations),d.hide_report,d.hide_mutations,coalesce(d.hide_error,''),u.role in('teacher','admin') from defenses d join users u on u.id=$1 where d.id=$2`, actor, value.ID).Scan(&value.DefenseMode, &value.ErrorCount, &report, &mutations, &value.PreparationError, &teacher); err != nil {
+	if err := r.db.pool.QueryRow(ctx, `select d.defense_mode,jsonb_array_length(d.hide_mutations),d.hide_report,d.hide_mutations,d.preparation_timings,coalesce(d.hide_error,''),u.role in('teacher','admin') from defenses d join users u on u.id=$1 where d.id=$2`, actor, value.ID).Scan(&value.DefenseMode, &value.ErrorCount, &report, &mutations, &value.PreparationTimings, &value.PreparationError, &teacher); err != nil {
 		return err
 	}
 	if value.DefenseMode == "hide_seek" {
@@ -62,7 +62,7 @@ func (r *DefenseRepository) ConfigureHide(ctx context.Context, actor, id string,
 		return Defense{}, appauth.ErrForbidden
 	}
 	raw, _ := json.Marshal(mutations)
-	_, err = tx.Exec(ctx, `update defenses set defense_mode='hide_seek',hide_mutations=$2::jsonb,hide_report=null,hide_error=null,time_limit_seconds=$3,selected_candidate_id=null,selection_mode='manual',wheel_size=null,entity_mode=null,current_draft='',draft_version=draft_version+1,status='preparing' where id=$1`, id, string(raw), seconds)
+	_, err = tx.Exec(ctx, `update defenses set defense_mode='hide_seek',hide_mutations=$2::jsonb,hide_report=null,hide_error=null,preparation_timings=null,time_limit_seconds=$3,selected_candidate_id=null,selection_mode='manual',wheel_size=null,entity_mode=null,current_draft='',draft_version=draft_version+1,status='preparing' where id=$1`, id, string(raw), seconds)
 	if err != nil {
 		return Defense{}, err
 	}
