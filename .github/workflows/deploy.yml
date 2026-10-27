@@ -29,10 +29,47 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Install GCC 12
+      - name: Test release validation and rollback
+        run: python3 -m unittest discover -s deploy/tests -v
+
+      - name: Set up Go for sandbox verification
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.1"
+          cache-dependency-path: backend/go.sum
+
+      - name: Build and verify sandbox before touching production
+        env:
+          CPPDEFENSE_TEST_SANDBOX_IMAGE: localhost/cppdefense-sandbox-candidate:release
+          CPPDEFENSE_TEST_CONTAINER_RUNTIME: docker
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            -f deploy/sandbox.Dockerfile \
+            -t "$CPPDEFENSE_TEST_SANDBOX_IMAGE" deploy
+          go -C backend test -race ./internal/runner \
+            -run '^TestRealSandboxIncrementalSnapshotIsolation$' -count=1 -v
+          docker image inspect --format '{{.Id}}' "$CPPDEFENSE_TEST_SANDBOX_IMAGE" \
+            > deploy/.cppdefense-sandbox.image-id.new
+          docker image save "$CPPDEFENSE_TEST_SANDBOX_IMAGE" | gzip -1 \
+            > deploy/.cppdefense-sandbox.tar.gz.new
+          sha256sum deploy/.cppdefense-sandbox.tar.gz.new | cut -d ' ' -f 1 \
+            > deploy/.cppdefense-sandbox.sha256.new
+
+      - name: Install GCC 12 and Podman archive verifier
         run: |
           sudo apt-get update
-          sudo apt-get install --yes gcc-12 g++-12
+          sudo apt-get install --yes gcc-12 g++-12 podman
+
+      - name: Verify Docker archive loads in Podman
+        run: |
+          set -euo pipefail
+          expected_id=$(cat deploy/.cppdefense-sandbox.image-id.new)
+          sudo podman load --input deploy/.cppdefense-sandbox.tar.gz.new
+          loaded_id=$(sudo podman image inspect --format '{{.Id}}' "$expected_id")
+          test "${loaded_id#sha256:}" = "${expected_id#sha256:}"
+          sudo podman run --rm --pull never --network none "$expected_id" sh -lc \
+            'command -v ninja && test -x /opt/cppdefense/timed.sh && find /usr/lib -name GTestConfig.cmake | grep -q .'
 
       - name: Build C++ worker
         run: |
@@ -62,14 +99,27 @@ jobs:
           scp \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=12 \
             build-deploy-worker/cpp-defense-worker \
             "$VPS_USER@$VPS_HOST:/opt/cppdefense/source/deploy/.cpp-defense-worker.new"
+
+      - name: Upload verified sandbox archive
+        run: |
+          scp -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=12 \
+            deploy/.cppdefense-sandbox.tar.gz.new \
+            deploy/.cppdefense-sandbox.sha256.new \
+            deploy/.cppdefense-sandbox.image-id.new \
+            "$VPS_USER@$VPS_HOST:/opt/cppdefense/source/deploy/"
 
       - name: Update application on VPS
         run: |
           ssh \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=12 \
             "$VPS_USER@$VPS_HOST" \
             bash -s -- "$GITHUB_SHA" <<'REMOTE'
           set -eu
