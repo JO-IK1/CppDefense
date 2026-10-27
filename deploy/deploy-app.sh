@@ -7,14 +7,22 @@ cd "$script_dir"
 test -s production.env
 runner_candidate="$script_dir/.cppdefense-runner.new"
 worker_candidate="$script_dir/.cpp-defense-worker.new"
+sandbox_archive="$script_dir/.cppdefense-sandbox.tar.gz.new"
+sandbox_checksum="$script_dir/.cppdefense-sandbox.sha256.new"
+sandbox_id="$script_dir/.cppdefense-sandbox.image-id.new"
 cleanup() {
-  rm -f "$runner_candidate" "$worker_candidate"
+  rm -f "$runner_candidate" "$worker_candidate" "$sandbox_archive" "$sandbox_checksum" "$sandbox_id"
 }
 trap cleanup EXIT HUP INT TERM
 
 test -f "$worker_candidate"
 test ! -L "$worker_candidate"
 test -x "$worker_candidate"
+for artifact in "$sandbox_archive" "$sandbox_checksum" "$sandbox_id"; do
+  test -f "$artifact"
+  test ! -L "$artifact"
+  test -s "$artifact"
+done
 
 installer_source="$script_dir/install-runner-release.sh"
 installer_target=/usr/local/sbin/cppdefense-install-runner
