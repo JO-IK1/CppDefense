@@ -80,7 +80,22 @@ func (a *agent) referenceEnvironment(ctx context.Context) (string, string, error
 	image := "sha256:" + strings.ToLower(id)
 	// Derived from the actual execution arguments and script, not a manually
 	// maintained version label. Project location is not an execution setting.
-	policy, _ := json.Marshal([]any{a.config.Runtime, a.config.Timeout, sandboxArguments(image, "REFERENCE_PROJECT"), sandboxScript})
+	runtimeSignature := ""
+	if binary, err := exec.LookPath(a.config.Runtime); err == nil {
+		if info, err := os.Stat(binary); err == nil {
+			runtimeSignature = fmt.Sprintf("%s:%d:%d", binary, info.Size(), info.ModTime().UnixNano())
+		}
+	}
+	configurationSignature := ""
+	if conf := os.Getenv("CONTAINERS_CONF"); conf != "" {
+		raw, err := os.ReadFile(conf)
+		if err != nil {
+			return "", "", fmt.Errorf("cannot read runtime configuration")
+		}
+		hash := sha256.Sum256(raw)
+		configurationSignature = hex.EncodeToString(hash[:])
+	}
+	policy, _ := json.Marshal([]any{snapshotSchema, a.config.Runtime, runtimeSignature, configurationSignature, a.config.Timeout, sandboxArguments(image, "REFERENCE_PROJECT"), sandboxScript})
 	digest := sha256.Sum256(policy)
 	return image, hex.EncodeToString(digest[:]), nil
 }
@@ -113,6 +128,24 @@ func (a *agent) rememberReference(project string, lease postgres.Lease, image, p
 }
 
 func (a *agent) verifyOriginal(ctx context.Context, project string, lease postgres.Lease) (*postgres.ReferenceResult, sandboxResults) {
+	if a.config.BuildCacheDir != "" {
+		if b, err := a.newBuildContext(ctx, project, lease); err == nil {
+			snapshot, result, err := a.ensureSnapshot(ctx, project, lease, b, true)
+			if err == nil {
+				if snapshot == nil {
+					return nil, result
+				}
+				a.referenceMu.Lock()
+				if a.references == nil || len(a.references) >= 256 {
+					a.references = make(map[string]postgres.ReferenceResult)
+				}
+				a.references[b.Key] = snapshot.Proof
+				a.referenceMu.Unlock()
+				proof := snapshot.Proof
+				return &proof, result
+			}
+		}
+	}
 	image, policy, envErr := a.referenceEnvironment(ctx)
 	var key string
 	if envErr == nil {

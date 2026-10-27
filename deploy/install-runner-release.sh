@@ -63,6 +63,11 @@ done
 test -f "$sandbox_dockerfile"
 install -d -m 0700 -o cppdefense-runner -g cppdefense-runner "/run/user/$runner_uid"
 install -d -m 0700 -o cppdefense-runner -g cppdefense-runner "$sandbox_context"
+install -d -m 0700 -o cppdefense-runner -g cppdefense-runner "$sandbox_context/sandbox-tools/googletest"
+for helper in timed.sh timing.cmake googletest/CMakeLists.txt; do
+  install -m 0644 -o cppdefense-runner -g cppdefense-runner \
+    "/opt/cppdefense/source/deploy/sandbox-tools/$helper" "$sandbox_context/sandbox-tools/$helper"
+done
 sandbox_previous=$(runner_podman image inspect --format '{{.Id}}' "$sandbox_image" 2>/dev/null || true)
 runner_podman build \
   --file "$sandbox_dockerfile" \
@@ -70,7 +75,7 @@ runner_podman build \
   "$sandbox_context"
 sandbox_replaced=1
 runner_podman run --rm --network none "$sandbox_image" sh -lc \
-  'test -r /usr/src/googletest/CMakeLists.txt && test -r /usr/lib/x86_64-linux-gnu/cmake/GTest/GTestConfig.cmake'
+  'command -v ninja && test -x /opt/cppdefense/timed.sh && test -r /opt/cppdefense/googletest/CMakeLists.txt && find /usr/lib -name GTestConfig.cmake | grep -q .'
 
 install -o root -g root -m 0755 "$runner_target" "$runner_backup"
 install -o root -g root -m 0755 "$worker_target" "$worker_backup"

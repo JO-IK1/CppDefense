@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/JO-IK1/CppDefense/backend/internal/application/audit"
@@ -390,13 +391,14 @@ func (h *defenseHTTP) lease(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		RunnerID string `json:"runner_id"`
 		Capacity int    `json:"capacity"`
+		WaitMS   int    `json:"wait_ms"`
 	}
-	if !decodeJSON(w, r, &in) || !uuidPattern.MatchString(in.RunnerID) || in.Capacity < 1 || in.Capacity > 6 {
+	if !decodeJSON(w, r, &in) || !uuidPattern.MatchString(in.RunnerID) || in.Capacity < 1 || in.Capacity > 6 || in.WaitMS < 0 || in.WaitMS > 20000 {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Lease request is invalid")
 		return
 	}
 	digest := sha256.Sum256([]byte(h.runnerToken))
-	v, e := h.repository.Lease(r.Context(), in.RunnerID, in.Capacity, digest[:])
+	v, e := h.repository.LeaseWaiting(r.Context(), in.RunnerID, in.Capacity, digest[:], time.Duration(in.WaitMS)*time.Millisecond)
 	if errors.Is(e, pgx.ErrNoRows) {
 		w.WriteHeader(204)
 		return

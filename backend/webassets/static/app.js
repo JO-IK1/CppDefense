@@ -785,6 +785,20 @@ const attemptOutcome = {
 };
 const attemptStages = [["configure_result", "Конфигурация CMake"], ["build_result", "Сборка проекта"], ["ctest_result", "Тесты CTest"]];
 
+function createTimingReport(timing) {
+  if (!timing) return null;
+  const details = node("details", "attempt-timings");
+  details.append(node("summary", "", "Время проверки"));
+  const list = node("dl", "timing-list");
+  for (const [key, label] of [["queue_ms", "Ожидание очереди"], ["download_ms", "Получение и распаковка"], ["materialize_ms", "Подготовка исходников"], ["container_ms", "Запуск контейнеров"], ["configure_ms", "CMake"], ["compile_ms", "Компиляция (сумма команд)"], ["link_ms", "Линковка (сумма команд)"], ["build_ms", "Сборка целиком"], ["test_ms", "Тесты"], ["snapshot_ms", "Копирование снимка"], ["total_ms", "Общее время"]]) {
+    const value = timing[key];
+    list.append(node("dt", "", label), node("dd", "", typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${value.toFixed(1)} мс` : "Нет замера"));
+  }
+  details.append(list, node("p", "form-note", timing.snapshot_hit ? "Использован проверенный снимок. Тесты запускались в отдельной рабочей копии." : "Проверенный снимок сборки не использован."));
+  details.append(node("p", "form-note", "Компиляции могут идти параллельно: сумма времени команд не обязана совпадать со временем сборки."));
+  return details;
+}
+
 function createAttemptReport(attempt, compact = false) {
   const meta = attemptOutcome[attempt.outcome] || { label: attempt.outcome, title: "Результат проверки", tone: "pending" };
   const report = node("article", `attempt-report attempt-report--${meta.tone}${compact ? " attempt-report--compact" : ""}`);
@@ -795,6 +809,8 @@ function createAttemptReport(attempt, compact = false) {
   header.append(heading);
   if (compact) header.append(node("code", "attempt-report__id", attempt.defense_id));
   report.append(header);
+  const timingReport = createTimingReport(attempt.timings);
+  if (timingReport) report.append(timingReport);
 
   if (attempt.outcome === "passed" && attempt.reference_result) {
     report.append(node("p", "attempt-verdict attempt-verdict--success", "Ответ совпал с проверенным оригиналом — защита успешно сдана."));
@@ -809,7 +825,7 @@ function createAttemptReport(attempt, compact = false) {
     const card = node("div", `attempt-stage attempt-stage--${state}`);
     card.append(node("span", "attempt-stage__mark", state === "success" ? "✓" : state === "danger" ? "×" : "…"));
     const copy = node("div");
-    copy.append(node("strong", "", label), node("span", "", !result ? "Ожидание" : result.ok ? "OK" : `Ошибка · код ${result.exit_code}`));
+    copy.append(node("strong", "", label), node("span", "", !result ? "Ожидание" : result.ok ? (result.reused ? "Из проверенного снимка" : "OK") : `Ошибка · код ${result.exit_code}`));
     card.append(copy);
     stages.append(card);
   }
@@ -956,6 +972,8 @@ function renderHideMutations() {
 function renderHideValidation(value) {
   const root = document.querySelector("#hide-validation-report");
   root.replaceChildren();
+  const timingReport = createTimingReport(value.preparation_timings);
+  if (timingReport) root.append(timingReport);
   const report = value.hide_report;
   if (!report) { root.append(node("p", "form-note", "Задание проверяется runner. Таймер студента ещё не запущен.")); return; }
   root.append(node("strong", "", report.message));
@@ -964,7 +982,7 @@ function renderHideValidation(value) {
     const group = node("details", "hide-report"); group.append(node("summary", "", title));
     for (const [stage, label] of [["configure", "CMake"], ["build", "Сборка"], ["ctest", "Тесты"]]) {
       const result = stages[stage]; if (!result) continue;
-      group.append(node("strong", "", `${label}: ${result.ok ? "ОК" : "Ошибка"} · код ${result.exit_code}`));
+      group.append(node("strong", "", `${label}: ${result.ok ? (result.reused ? "Из проверенного снимка" : "ОК") : "Ошибка"} · код ${result.exit_code}`));
       group.append(node("pre", "", result.log));
     }
     root.append(group);

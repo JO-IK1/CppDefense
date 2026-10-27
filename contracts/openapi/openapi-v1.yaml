@@ -1285,6 +1285,11 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 6
+                wait_ms:
+                  type: integer
+                  minimum: 0
+                  maximum: 20000
+                  description: Wait for a PostgreSQL job notification when the queue is empty; zero preserves immediate polling.
       responses:
         '200':
           description: One job leased
@@ -1847,6 +1852,7 @@ components:
       additionalProperties: false
       required: [id, session_id, submission_version_id, student_login, lab_code, lab_name, status, preparation_stage, seed, time_limit_seconds, wheel_size, entity_mode, selection_mode, current_draft, draft_version, wheel_candidates, created_at]
       properties:
+        preparation_timings: { $ref: '#/components/schemas/JobTimings' }
         defense_mode: { enum: [restore, hide_seek] }
         error_count: { type: integer, minimum: 0, maximum: 5 }
         hide_report:
@@ -1975,6 +1981,7 @@ components:
       additionalProperties: false
       required: [id, defense_id, attempt_no, outcome, accepted_at]
       properties:
+        timings: { $ref: '#/components/schemas/JobTimings' }
         reference_result:
           $ref: '#/components/schemas/ReferenceResult'
         id:
@@ -2000,6 +2007,7 @@ components:
       additionalProperties: false
       required: [job_id, kind, defense_id, lease_token, lease_expires_at, session_id, submission_object_key, seed, top_n]
       properties:
+        queue_wait_ms: { type: integer, minimum: 0 }
         defense_mode: { enum: [restore, hide_seek] }
         hide_mutations:
           type: array
@@ -2112,6 +2120,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        timings: { $ref: '#/components/schemas/JobTimings' }
         reference_result:
           $ref: '#/components/schemas/ReferenceResult'
         hide_validation: { $ref: '#/components/schemas/HideValidation' }
@@ -2131,6 +2140,25 @@ components:
         configure_result: {}
         build_result: {}
         ctest_result: {}
+    JobTimings:
+      type: object
+      additionalProperties: false
+      description: Milliseconds. Total includes queue; compile/link are sums of overlapping command wall times. Null means no measurement, not zero.
+      properties:
+        queue_ms: { type: number, minimum: 0 }
+        download_ms: { type: number, minimum: 0 }
+        materialize_ms: { type: number, minimum: 0 }
+        container_ms: { type: number, minimum: 0 }
+        configure_ms: { type: number, minimum: 0 }
+        compile_ms: { type: [number, 'null'], minimum: 0 }
+        link_ms: { type: [number, 'null'], minimum: 0 }
+        build_ms: { type: number, minimum: 0 }
+        test_ms: { type: number, minimum: 0 }
+        snapshot_ms: { type: number, minimum: 0 }
+        total_ms: { type: number, minimum: 0 }
+        snapshot_hit: { type: boolean }
+        compile_commands: { type: integer, minimum: 0 }
+        link_commands: { type: integer, minimum: 0 }
     ReferenceResult:
       type: object
       additionalProperties: false

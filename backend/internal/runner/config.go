@@ -3,6 +3,7 @@ package runner
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,9 @@ import (
 )
 
 type config struct {
+	BuildCacheDir                                    string
+	BuildCacheBytes                                  int64
+	BuildCacheTTL                                    time.Duration
 	Backend, Token, RunnerID, Worker, Image, Runtime string
 	Poll, Timeout                                    time.Duration
 	Slots                                            int
@@ -18,8 +22,15 @@ type config struct {
 }
 
 func load() (config, error) {
-	cfg := config{Backend: strings.TrimRight(os.Getenv("CPPDEFENSE_BACKEND_URL"), "/"), Token: os.Getenv("CPPDEFENSE_RUNNER_TOKEN"), RunnerID: os.Getenv("CPPDEFENSE_RUNNER_ID"), Worker: env("CPPDEFENSE_WORKER_PATH", "cpp-defense-worker"), Image: env("CPPDEFENSE_SANDBOX_IMAGE", "localhost/cppdefense-sandbox:2.1.0"), Runtime: env("CPPDEFENSE_CONTAINER_RUNTIME", "podman"), Poll: duration("CPPDEFENSE_RUNNER_POLL_INTERVAL", 2*time.Second), Timeout: duration("CPPDEFENSE_JOB_TIMEOUT", 5*time.Minute), Slots: integer("CPPDEFENSE_RUNNER_SLOTS", 4)}
+	cfg := config{Backend: strings.TrimRight(os.Getenv("CPPDEFENSE_BACKEND_URL"), "/"), Token: os.Getenv("CPPDEFENSE_RUNNER_TOKEN"), RunnerID: os.Getenv("CPPDEFENSE_RUNNER_ID"), Worker: env("CPPDEFENSE_WORKER_PATH", "cpp-defense-worker"), Image: env("CPPDEFENSE_SANDBOX_IMAGE", "localhost/cppdefense-sandbox:2.1.0"), Runtime: env("CPPDEFENSE_CONTAINER_RUNTIME", "podman"), Poll: duration("CPPDEFENSE_RUNNER_POLL_INTERVAL", 2*time.Second), Timeout: duration("CPPDEFENSE_JOB_TIMEOUT", 5*time.Minute), Slots: integer("CPPDEFENSE_RUNNER_SLOTS", 1)}
 	cfg.Storage = s3storage.Config{Endpoint: os.Getenv("CPPDEFENSE_STORAGE_S3_ENDPOINT"), Region: env("CPPDEFENSE_STORAGE_S3_REGION", "us-east-1"), Bucket: os.Getenv("CPPDEFENSE_STORAGE_S3_BUCKET"), AccessKey: os.Getenv("CPPDEFENSE_STORAGE_S3_ACCESS_KEY"), SecretKey: os.Getenv("CPPDEFENSE_STORAGE_S3_SECRET_KEY"), Secure: env("CPPDEFENSE_STORAGE_S3_SECURE", "false") == "true", SpoolDir: os.Getenv("CPPDEFENSE_STORAGE_SPOOL_DIR")}
+	home, _ := os.UserHomeDir()
+	cfg.BuildCacheDir = env("CPPDEFENSE_BUILD_CACHE_DIR", filepath.Join(home, "build-snapshots"))
+	cfg.BuildCacheBytes = int64(integer("CPPDEFENSE_BUILD_CACHE_MIB", 2048)) << 20
+	cfg.BuildCacheTTL = duration("CPPDEFENSE_BUILD_CACHE_TTL", 24*time.Hour)
+	if !filepath.IsAbs(cfg.BuildCacheDir) || filepath.Clean(cfg.BuildCacheDir) == string(filepath.Separator) || cfg.BuildCacheBytes < maxSnapshotBytes || cfg.BuildCacheTTL <= 0 {
+		return cfg, errors.New("invalid build cache configuration")
+	}
 	if cfg.Backend == "" || len(cfg.Token) < 32 || cfg.RunnerID == "" {
 		return cfg, errors.New("backend URL, runner ID and token are required")
 	}

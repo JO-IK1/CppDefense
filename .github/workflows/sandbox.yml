@@ -1,0 +1,29 @@
+name: Incremental sandbox
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.1"
+          cache-dependency-path: backend/go.sum
+      - name: Build the actual sandbox image
+        run: docker build -f deploy/sandbox.Dockerfile -t cppdefense-sandbox:ci deploy
+      - name: Test incremental builds and attempt isolation in Linux containers
+        env:
+          CPPDEFENSE_TEST_SANDBOX_IMAGE: cppdefense-sandbox:ci
+          CPPDEFENSE_TEST_CONTAINER_RUNTIME: docker
+        run: go -C backend test -race ./internal/runner -run TestRealSandboxIncrementalSnapshotIsolation -count=1 -v

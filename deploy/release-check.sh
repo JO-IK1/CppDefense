@@ -25,8 +25,8 @@ CPPDEFENSE_ENV_FILE="$env_file" docker compose --env-file "$env_file" \
   -f "$script_dir/production.compose.yaml" config --quiet
 CPPDEFENSE_ENV_FILE="$env_file" docker compose --env-file "$env_file" \
   -f "$script_dir/production.compose.yaml" build backend
-docker build -f "$script_dir/sandbox.Dockerfile" -t cppdefense-sandbox:release-check .
+docker build -f "$script_dir/sandbox.Dockerfile" -t cppdefense-sandbox:release-check "$script_dir"
 docker run --rm --network none cppdefense-sandbox:release-check sh -lc \
-  'test -r /usr/src/googletest/CMakeLists.txt && test -r /usr/lib/x86_64-linux-gnu/cmake/GTest/GTestConfig.cmake'
+  'command -v ninja && test -x /opt/cppdefense/timed.sh && test -r /opt/cppdefense/googletest/CMakeLists.txt'
 
 printf 'CppDefense 2.1.0 release checks passed\n'
