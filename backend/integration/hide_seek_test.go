@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 )
 
 func TestHideSeekLifecycleAndOriginalAccess(t *testing.T) {
+	t.Run("sandbox", func(t *testing.T) { testHideSeekLifecycle(t, false) })
+	t.Run("reference", func(t *testing.T) { testHideSeekLifecycle(t, true) })
+}
+
+func testHideSeekLifecycle(t *testing.T, useReference bool) {
 	db := database(t)
 	ctx := context.Background()
 	uuid := func() string {
@@ -144,12 +150,39 @@ func TestHideSeekLifecycleAndOriginalAccess(t *testing.T) {
 		if job.Answer == nil || *job.Answer != answer || job.Kind != "check_attempt" {
 			t.Fatalf("answer not leased: %#v", job)
 		}
-		if _, e = r.Complete(ctx, job.JobID, job.LeaseToken, postgres.Completion{Outcome: outcome, ConfigureResult: map[string]any{"ok": true}, BuildResult: map[string]any{"ok": true}, CTestResult: map[string]any{"ok": outcome == "passed"}}); e != nil {
+		result := postgres.Completion{Outcome: outcome, ConfigureResult: map[string]any{"ok": true}, BuildResult: map[string]any{"ok": true}, CTestResult: map[string]any{"ok": outcome == "passed"}}
+		if useReference && outcome == "passed" {
+			proof := &postgres.ReferenceResult{ProjectSHA256: strings.Repeat("a", 64), PolicySHA256: strings.Repeat("b", 64), ImageID: "sha256:" + strings.Repeat("c", 64), VerifiedAt: time.Now().UTC()}
+			bad := postgres.Completion{Outcome: "failed", ReferenceResult: proof}
+			if _, err := r.Complete(ctx, job.JobID, job.LeaseToken, bad); err == nil {
+				t.Fatal("reference accepted for failed answer")
+			}
+			bad.Outcome = "passed"
+			bad.ConfigureResult = map[string]any{"ok": true}
+			if _, err := r.Complete(ctx, job.JobID, job.LeaseToken, bad); err == nil {
+				t.Fatal("reference mixed with executed stages")
+			}
+			result = postgres.Completion{Outcome: "passed", ReferenceResult: proof}
+		}
+		if _, e = r.Complete(ctx, job.JobID, job.LeaseToken, result); e != nil {
 			t.Fatal(e)
 		}
 		got, e := r.GetAttempt(ctx, student, attempt.ID)
 		if e != nil || got.Outcome != outcome {
 			t.Fatalf("attempt: %#v %v", got, e)
+		}
+		if useReference && outcome == "passed" {
+			if got.ReferenceResult == nil || got.ConfigureResult != nil || got.BuildResult != nil || got.CTestResult != nil {
+				t.Fatalf("incorrect reference result: %#v", got)
+			}
+			repeated, err := r.Complete(ctx, job.JobID, job.LeaseToken, result)
+			if err != nil || repeated.ReferenceResult == nil {
+				t.Fatalf("reference lost on retry: %#v %v", repeated, err)
+			}
+			history, err := r.History(ctx, teacher, group, "", "", "passed", 10)
+			if err != nil || len(history) != 1 || history[0].ReferenceResult == nil {
+				t.Fatalf("teacher history lost reference: %#v %v", history, err)
+			}
 		}
 		v, e = r.Get(ctx, student, defense)
 		if e != nil {
