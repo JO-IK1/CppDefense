@@ -796,6 +796,12 @@ function createAttemptReport(attempt, compact = false) {
   if (compact) header.append(node("code", "attempt-report__id", attempt.defense_id));
   report.append(header);
 
+  if (attempt.outcome === "passed" && attempt.reference_result) {
+    report.append(node("p", "attempt-verdict attempt-verdict--success", "Ответ совпал с проверенным оригиналом — защита успешно сдана."));
+    report.append(node("p", "form-note", "Повторная сборка и тесты не запускались. Использован результат предварительной проверки этой версии лабораторной."));
+    return report;
+  }
+
   const stages = node("div", "attempt-stages");
   for (const [key, label] of attemptStages) {
     const result = attempt[key];
