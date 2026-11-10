@@ -249,6 +249,19 @@
                 "selected_function": {
                   "$ref": "#/$defs/selectedFunction"
                 },
+                "full_definition": { "type": "boolean", "default": false },
+                "additional_replacements": {
+                  "type": "array", "maxItems": 4,
+                  "items": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["selected_function", "answer", "full_definition"],
+                    "properties": {
+                      "selected_function": { "$ref": "#/$defs/selectedFunction" },
+                      "answer": { "type": "string", "maxLength": 1048576 },
+                      "full_definition": { "type": "boolean" }
+                    }
+                  }
+                },
                 "answer": {
                   "type": "string",
                   "description": "Function body contents without the outer braces; nested blocks are allowed.",

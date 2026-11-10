@@ -6,6 +6,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -367,6 +368,55 @@ bool TestInvalidInputsAndSourceChange() {
   return passed;
 }
 
+bool TestMultiRestoreFullDefinitions() {
+  TemporaryDirectory temporary;
+  const auto project = CreateProject(temporary.path(), kSessionOne);
+  const std::string original = "struct Box {\n int value;\n Box() { value = 1; }\n int Read() { return value; }\n};\nint F() { return 1; }\nint G() { return 2; }\n";
+  Write(project / "src/math.cpp", original);
+  const auto analyzed = Run(temporary.path(), Request("analyze_project", kSessionOne, {{"project_root", "project"}}));
+  std::map<std::string, Json> selected;
+  for (const auto& candidate : analyzed.at("result").at("candidates")) {
+    if (candidate.at("file_path") != "src/math.cpp") continue;
+    Json value;
+    for (const auto* key : {"function_name", "entity_type", "file_path", "signature_begin", "body_begin", "body_end", "source_sha256"}) value[key] = candidate.at(key);
+    selected[candidate.at("function_name").get<std::string>()] = value;
+  }
+  fs::create_directory(temporary.path() / kSessionOne / "attempts");
+  Json payload{{"project_root", "project"}, {"output_root", "attempts/multi"},
+    {"selected_function", selected.at("F")}, {"answer", "int F() { return 11; }"}, {"full_definition", true},
+    {"additional_replacements", Json::array({
+      {{"selected_function", selected.at("Box")}, {"answer", "struct Box { int value; int other; };"}, {"full_definition", true}},
+      {{"selected_function", selected.at("G")}, {"answer", "int G() { return 22; }"}, {"full_definition", true}}
+    })}};
+  const auto result = Run(temporary.path(), Request("materialize_attempt", kSessionOne, payload));
+  bool passed = Expect(result.at("status") == "ok", "multiple complete definitions materialize together");
+  if (result.at("status") == "ok") {
+    const auto changed = Read(temporary.path() / kSessionOne / "attempts/multi/src/math.cpp");
+    passed &= Expect(changed.find("int other; };") != std::string::npos && changed.find("return 11;") != std::string::npos && changed.find("return 22;") != std::string::npos, "all replacements use original byte offsets and keep one semicolon");
+  }
+  passed &= Expect(Read(project / "src/math.cpp") == original, "multi restore leaves original immutable");
+  payload["output_root"] = "attempts/overlap";
+  payload["additional_replacements"][0]["selected_function"] = selected.at("F");
+  payload["additional_replacements"][0]["answer"] = "int F() {return 0;}";
+  const auto overlap = Run(temporary.path(), Request("materialize_attempt", kSessionOne, payload));
+  passed &= Expect(overlap.at("status") == "error" && overlap.at("error").at("code") == "INVALID_RANGE", "overlapping selections are rejected atomically");
+  payload.erase("additional_replacements"); payload["output_root"] = "attempts/injected";
+  payload["answer"] = "int F() {return 0;} int Injected() {return 1;}";
+  const auto injected = Run(temporary.path(), Request("materialize_attempt", kSessionOne, payload));
+  passed &= Expect(injected.at("status") == "error" && injected.at("error").at("code") == "INVALID_ANSWER", "complete answers cannot inject outside definitions");
+  payload["selected_function"] = selected.at("Box::Read");
+  payload["answer"] = "int Read() { return value + 1; }";
+  payload["output_root"] = "attempts/member";
+  const auto member = Run(temporary.path(), Request("materialize_attempt", kSessionOne, payload));
+  passed &= Expect(member.at("status") == "ok", "complete member answers keep their enclosing scope");
+  payload["selected_function"] = selected.at("Box::Box");
+  payload["answer"] = "Box() { value = 2; }";
+  payload["output_root"] = "attempts/constructor";
+  const auto constructor = Run(temporary.path(), Request("materialize_attempt", kSessionOne, payload));
+  passed &= Expect(constructor.at("status") == "ok", "complete constructor answers are parsed in class scope");
+  return passed;
+}
+
 bool TestParallelSessionsAreIsolated() {
   TemporaryDirectory temporary;
   CreateProject(temporary.path(), kSessionOne);
@@ -399,6 +449,7 @@ int main() {
   passed &= TestAnalyzeAndPrepare();
   passed &= TestMaterializeBodyWithoutOuterBraces();
   passed &= TestMaterializeClassBody();
+  passed &= TestMultiRestoreFullDefinitions();
   passed &= TestInvalidInputsAndSourceChange();
   passed &= TestParallelSessionsAreIsolated();
   return passed ? 0 : 1;
