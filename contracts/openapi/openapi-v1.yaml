@@ -1290,6 +1290,10 @@ paths:
                   minimum: 0
                   maximum: 20000
                   description: Wait for a PostgreSQL job notification when the queue is empty; zero preserves immediate polling.
+                accept_warmups:
+                  type: boolean
+                  default: false
+                  description: Opt in to background warm_submission jobs; legacy runners never receive them.
       responses:
         '200':
           description: One job leased
@@ -2005,7 +2009,7 @@ components:
     JobLease:
       type: object
       additionalProperties: false
-      required: [job_id, kind, defense_id, lease_token, lease_expires_at, session_id, submission_object_key, seed, top_n]
+      required: [job_id, kind, lease_token, lease_expires_at, session_id, submission_object_key, seed, top_n]
       properties:
         queue_wait_ms: { type: integer, minimum: 0 }
         defense_mode: { enum: [restore, hide_seek] }
@@ -2017,7 +2021,7 @@ components:
         job_id:
           $ref: '#/components/schemas/Uuid'
         kind:
-          enum: [prepare_defense, check_attempt]
+          enum: [prepare_defense, check_attempt, warm_submission]
         defense_id:
           $ref: '#/components/schemas/Uuid'
         attempt_id:

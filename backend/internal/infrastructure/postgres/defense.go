@@ -151,6 +151,10 @@ func (r *DefenseRepository) Create(ctx context.Context, actor, submission, key s
 	if e != nil {
 		return Defense{}, e
 	}
+	// Old submissions can warm while the teacher chooses a task, too.
+	if e = enqueueSubmissionWarmup(ctx, tx, submission); e != nil {
+		return Defense{}, e
+	}
 	if e = tx.Commit(ctx); e != nil {
 		return Defense{}, e
 	}
@@ -532,7 +536,7 @@ type Lease struct {
 	HideMutations       []hideseek.Mutation `json:"hide_mutations,omitempty"`
 	JobID               string              `json:"job_id"`
 	Kind                string              `json:"kind"`
-	DefenseID           string              `json:"defense_id"`
+	DefenseID           string              `json:"defense_id,omitempty"`
 	AttemptID           *string             `json:"attempt_id"`
 	LeaseToken          string              `json:"lease_token"`
 	LeaseExpiresAt      time.Time           `json:"lease_expires_at"`
@@ -554,7 +558,8 @@ type SelectedFunction struct {
 	SourceSHA256   string `json:"source_sha256"`
 }
 
-func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots int, credentialHash []byte) (Lease, error) {
+func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots int, credentialHash []byte, warmups ...bool) (Lease, error) {
+	acceptWarmups := len(warmups) > 0 && warmups[0]
 	tx, e := r.db.pool.BeginTx(ctx, pgx.TxOptions{})
 	if e != nil {
 		return Lease{}, e
@@ -564,7 +569,7 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 	if e != nil {
 		return Lease{}, e
 	}
-	expired, e := tx.Query(ctx, `update runner_jobs set state=case when retry_count+1>max_retries then 'dead'::runner_job_state else 'queued'::runner_job_state end,retry_count=retry_count+1,lease_owner_runner_id=null,lease_token_hash=null,lease_expires_at=null where state='leased' and lease_expires_at<clock_timestamp() returning id,kind::text,defense_id,check_attempt_id,state::text`)
+	expired, e := tx.Query(ctx, `update runner_jobs set state=case when retry_count+1>max_retries then 'dead'::runner_job_state else 'queued'::runner_job_state end,retry_count=retry_count+1,lease_owner_runner_id=null,lease_token_hash=null,lease_expires_at=null where state='leased' and lease_expires_at<clock_timestamp() returning id,kind::text,coalesce(defense_id::text,''),check_attempt_id,state::text`)
 	if e != nil {
 		return Lease{}, e
 	}
@@ -596,7 +601,7 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 		}
 	}
 	var v Lease
-	e = tx.QueryRow(ctx, `select j.id,j.kind::text,j.defense_id,j.check_attempt_id,d.session_id,sv.normalized_object_key,d.seed::text,coalesce(d.wheel_size,12),a.answer,greatest(0,extract(epoch from (statement_timestamp()-greatest(j.created_at,j.available_at)))*1000)::bigint from runner_jobs j join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=d.submission_version_id left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() order by j.priority desc,j.created_at for update of j skip locked limit 1`).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer, &v.QueueWaitMS)
+	e = tx.QueryRow(ctx, `select j.id,j.kind::text,coalesce(j.defense_id::text,''),j.check_attempt_id,coalesce(d.session_id,sv.id),sv.normalized_object_key,coalesce(d.seed::text,'0'),coalesce(d.wheel_size,12),a.answer,greatest(0,extract(epoch from (statement_timestamp()-greatest(j.created_at,j.available_at)))*1000)::bigint from runner_jobs j left join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=coalesce(d.submission_version_id,j.submission_version_id) left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() and ($1 or j.kind<>'warm_submission') order by j.priority desc,j.created_at for update of j skip locked limit 1`, acceptWarmups).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer, &v.QueueWaitMS)
 	if e == pgx.ErrNoRows {
 		if commitErr := tx.Commit(ctx); commitErr != nil {
 			return Lease{}, commitErr
@@ -624,6 +629,10 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 	}
 	if e = tx.Commit(ctx); e != nil {
 		return Lease{}, e
+	}
+	if v.Kind == "warm_submission" {
+		v.DefenseMode = "restore"
+		return v, nil
 	}
 	var hideRaw []byte
 	if e = r.db.pool.QueryRow(ctx, `select defense_mode,hide_mutations from defenses where id=$1`, v.DefenseID).Scan(&v.DefenseMode, &hideRaw); e != nil {
@@ -690,6 +699,19 @@ type Completion struct {
 
 func (r *DefenseRepository) Heartbeat(ctx context.Context, job, token string) error {
 	hash := sha256.Sum256([]byte(token))
+	// Interactive jobs preempt background warmups instead of waiting behind a
+	// full cold build on a one-slot VPS. A 409 cancels its sandbox in the runner.
+	released, e := r.db.pool.Exec(ctx, `with released as (
+	 update runner_jobs set state='queued',lease_owner_runner_id=null,lease_token_hash=null,lease_expires_at=null
+	 where id=$1 and kind='warm_submission' and state='leased' and lease_token_hash=$2
+	 and exists(select 1 from runner_jobs pending where pending.kind<>'warm_submission' and pending.state in('queued','retry_wait') and pending.available_at<=clock_timestamp()) returning id
+	) update job_leases set released_at=clock_timestamp(),release_reason='preempted by interactive job' where job_id in(select id from released) and released_at is null`, job, hash[:])
+	if e != nil {
+		return e
+	}
+	if released.RowsAffected() != 0 {
+		return appauth.ErrConflict
+	}
 	result, e := r.db.pool.Exec(ctx, `update runner_jobs set lease_expires_at=clock_timestamp()+interval '2 minutes',updated_at=clock_timestamp() where id=$1 and state in('leased','running') and lease_token_hash=$2 and lease_expires_at>clock_timestamp()`, job, hash[:])
 	if e != nil || result.RowsAffected() != 1 {
 		return appauth.ErrConflict
@@ -706,7 +728,7 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 	hash := sha256.Sum256([]byte(token))
 	var kind, defense, state string
 	var attempt *string
-	e = tx.QueryRow(ctx, `select kind::text,defense_id,check_attempt_id,state::text from runner_jobs where id=$1 and lease_token_hash=$2 and (state='completed' or (state in('leased','running') and lease_expires_at>clock_timestamp())) for update`, job, hash[:]).Scan(&kind, &defense, &attempt, &state)
+	e = tx.QueryRow(ctx, `select kind::text,coalesce(defense_id::text,''),check_attempt_id,state::text from runner_jobs where id=$1 and lease_token_hash=$2 and (state='completed' or (state in('leased','running') and lease_expires_at>clock_timestamp())) for update`, job, hash[:]).Scan(&kind, &defense, &attempt, &state)
 	if e != nil {
 		return nil, appauth.ErrConflict
 	}
@@ -721,7 +743,23 @@ func (r *DefenseRepository) Complete(ctx context.Context, job, token string, inp
 	if e != nil {
 		return nil, e
 	}
-	if kind == "prepare_defense" {
+	if kind == "warm_submission" {
+		if input.Outcome != "passed" && input.Outcome != "failed" && input.Outcome != "error" {
+			return nil, fmt.Errorf("invalid warmup outcome")
+		}
+		if input.Timings != nil {
+			if e = input.Timings.Validate(); e != nil {
+				return nil, e
+			}
+		}
+		raw, err := json.Marshal(map[string]any{"outcome": input.Outcome, "timings": input.Timings})
+		if err != nil {
+			return nil, err
+		}
+		if _, e = tx.Exec(ctx, `update runner_jobs set preparation_result=$2::jsonb where id=$1`, job, string(raw)); e != nil {
+			return nil, e
+		}
+	} else if kind == "prepare_defense" {
 		if input.Timings != nil {
 			if err := input.Timings.Validate(); err != nil {
 				return nil, err

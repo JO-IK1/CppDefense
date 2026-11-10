@@ -538,6 +538,11 @@ func (r *ImportRepository) CommitApply(ctx context.Context, actor, importID stri
 				return nil, e
 			}
 		}
+		// Only approved, normalized submissions execute in the sandbox. Warmups
+		// use the ordinary leased queue, below interactive defenses in priority.
+		if e = enqueueSubmissionWarmup(ctx, tx, versionID); e != nil {
+			return nil, e
+		}
 		action := "create_version"
 		if duplicate {
 			action = "skip_duplicate"
