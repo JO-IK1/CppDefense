@@ -606,7 +606,7 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 		return Lease{}, e
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	_, e = tx.Exec(ctx, `insert into runners(id,name,status,slots,agent_version,credential_hash,last_heartbeat_at)values($1,$2,'active',$3,'2.1.0',$4,clock_timestamp()) on conflict(id)do update set status='active',slots=excluded.slots,agent_version=excluded.agent_version,last_heartbeat_at=clock_timestamp()`, runnerID, "runner-"+runnerID, slots, credentialHash)
+	_, e = tx.Exec(ctx, `insert into runners(id,name,status,slots,agent_version,credential_hash,last_heartbeat_at)values($1,$2,'active',$3,'3.0.0',$4,clock_timestamp()) on conflict(id)do update set status='active',slots=excluded.slots,agent_version=excluded.agent_version,last_heartbeat_at=clock_timestamp()`, runnerID, "runner-"+runnerID, slots, credentialHash)
 	if e != nil {
 		return Lease{}, e
 	}

@@ -264,7 +264,7 @@
                 },
                 "answer": {
                   "type": "string",
-                  "description": "Function body contents without the outer braces; nested blocks are allowed.",
+                  "description": "Body contents without outer braces, or one complete definition when full_definition is true. Nested blocks are allowed.",
                   "maxLength": 1048576
                 }
               }

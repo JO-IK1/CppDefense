@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: CppDefense API
-  version: 1.1.0
-  summary: Public application and private runner contracts for CppDefense 2.1.0
+  version: 3.0.0
+  summary: Public application and private runner contracts for CppDefense 3.0.0
   license:
     name: Proprietary source-available
 servers:

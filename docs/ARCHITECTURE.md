@@ -179,7 +179,7 @@ other personal data. The main namespaces are:
 - `original-archives/` for teacher uploads;
 - `normalized-submissions/` for immutable project versions;
 - `safe-logs/` is reserved for a future external-log implementation; version
-  2.1.0 stores bounded structured compilation results in PostgreSQL.
+  3.0.0 stores bounded structured compilation results in PostgreSQL.
 
 Writes calculate SHA-256 while streaming. Submission versions are immutable in
 PostgreSQL, and identical content for the same student and lab is deduplicated.

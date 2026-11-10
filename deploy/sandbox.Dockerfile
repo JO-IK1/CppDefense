@@ -11,4 +11,4 @@ RUN chmod 0555 /opt/cppdefense/timed.sh \
  && ln -s /usr/include /opt/cppdefense/googletest/googlemock/include
 USER 65532:65532
 WORKDIR /workspace
-LABEL org.opencontainers.image.title="CppDefense sandbox" org.opencontainers.image.version="2.4.0"
+LABEL org.opencontainers.image.title="CppDefense sandbox" org.opencontainers.image.version="3.0.0"

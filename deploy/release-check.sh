@@ -29,4 +29,4 @@ docker build -f "$script_dir/sandbox.Dockerfile" -t cppdefense-sandbox:release-c
 docker run --rm --network none cppdefense-sandbox:release-check sh -lc \
   'command -v ninja && test -x /opt/cppdefense/timed.sh && test -r /opt/cppdefense/googletest/CMakeLists.txt'
 
-printf 'CppDefense 2.1.0 release checks passed\n'
+printf 'CppDefense 3.0.0 release checks passed\n'
