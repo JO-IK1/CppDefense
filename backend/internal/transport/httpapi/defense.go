@@ -90,11 +90,14 @@ func (h *defenseHTTP) configure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		SelectionMode    string `json:"selection_mode"`
-		CandidateID      string `json:"candidate_id"`
-		TimeLimitSeconds int    `json:"time_limit_seconds"`
-		WheelSize        int    `json:"wheel_size"`
-		EntityMode       string `json:"entity_mode"`
+		HiddenCount       *int     `json:"hidden_count"`
+		SignaturesVisible *bool    `json:"signatures_visible"`
+		CandidateIDs      []string `json:"candidate_ids"`
+		SelectionMode     string   `json:"selection_mode"`
+		CandidateID       string   `json:"candidate_id"`
+		TimeLimitSeconds  int      `json:"time_limit_seconds"`
+		WheelSize         int      `json:"wheel_size"`
+		EntityMode        string   `json:"entity_mode"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -103,13 +106,37 @@ func (h *defenseHTTP) configure(w http.ResponseWriter, r *http.Request) {
 	validEntityMode := input.EntityMode == "functions_only" || input.EntityMode == "functions_classes_structs"
 	validCandidate := (input.SelectionMode == "automatic" && input.CandidateID == "") ||
 		(input.SelectionMode == "manual" && uuidPattern.MatchString(input.CandidateID))
+	var options []postgres.RestoreOptions
+	if input.HiddenCount != nil || input.SignaturesVisible != nil || input.CandidateIDs != nil {
+		o := postgres.RestoreOptions{HiddenCount: 1, SignaturesVisible: true, CandidateIDs: input.CandidateIDs}
+		if input.HiddenCount != nil {
+			o.HiddenCount = *input.HiddenCount
+		}
+		if input.SignaturesVisible != nil {
+			o.SignaturesVisible = *input.SignaturesVisible
+		}
+		validCandidate = o.HiddenCount >= 1 && o.HiddenCount <= 5 && o.HiddenCount <= input.WheelSize
+		if input.SelectionMode == "manual" {
+			validCandidate = validCandidate && len(o.CandidateIDs) == o.HiddenCount
+			for _, id := range o.CandidateIDs {
+				validCandidate = validCandidate && uuidPattern.MatchString(id)
+			}
+		} else {
+			validCandidate = validCandidate && len(o.CandidateIDs) == 0 && input.CandidateID == ""
+		}
+		options = append(options, o)
+	}
 	if !validIdempotencyKey(r) || !validSelection || !validEntityMode || !validCandidate ||
 		input.TimeLimitSeconds < 60 || input.TimeLimitSeconds > 1800 || input.WheelSize < 2 || input.WheelSize > 12 {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Defense configuration is invalid")
 		return
 	}
-	value, e := h.repository.Configure(r.Context(), actor.ID, r.PathValue("defense_id"), input.SelectionMode, input.CandidateID, input.EntityMode, input.TimeLimitSeconds, input.WheelSize)
+	value, e := h.repository.Configure(r.Context(), actor.ID, r.PathValue("defense_id"), input.SelectionMode, input.CandidateID, input.EntityMode, input.TimeLimitSeconds, input.WheelSize, options...)
 	if e != nil {
+		if errors.Is(e, postgres.ErrRestoreSelection) {
+			writeProblem(w, r, 400, "RESTORE_SELECTION_INVALID", "Выберите нужное число непересекающихся элементов. Класс или структуру нельзя скрывать вместе с их методом. При автоматическом выборе уменьшите число скрытых элементов или увеличьте колесо.")
+			return
+		}
 		h.fail(w, r, e)
 		return
 	}
@@ -174,7 +201,13 @@ func (h *defenseHTTP) repositoryFile(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, r, 422, "UNSUPPORTED_FILE", "Only UTF-8 text files up to 2 MiB can be viewed")
 			return
 		}
-		if access.MaskSelected && wanted == access.SelectedFile {
+		if len(access.Targets) > 0 {
+			content, e = maskRestoreTargets(content, wanted, access.Targets, access.SignaturesVisible)
+			if e != nil {
+				h.fail(w, r, e)
+				return
+			}
+		} else if access.MaskSelected && wanted == access.SelectedFile {
 			content, e = maskRepositoryBody(content, access.BodyBegin, access.BodyEnd)
 			if e != nil {
 				h.fail(w, r, e)
@@ -197,7 +230,11 @@ func (h *defenseHTTP) repositoryFile(w http.ResponseWriter, r *http.Request) {
 				content = changed[wanted]
 			}
 		}
-		writeJSON(w, 200, map[string]any{"path": wanted, "content": string(content), "masked": access.MaskSelected && wanted == access.SelectedFile, "editable": hideseek.Editable(wanted)})
+		masked := access.MaskSelected && wanted == access.SelectedFile
+		for _, t := range access.Targets {
+			masked = masked || t.FilePath == wanted
+		}
+		writeJSON(w, 200, map[string]any{"path": wanted, "content": string(content), "masked": masked, "editable": hideseek.Editable(wanted)})
 		return
 	}
 	writeProblem(w, r, 404, "NOT_FOUND", "Repository file was not found")
@@ -389,17 +426,18 @@ func (h *defenseHTTP) lease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		RunnerID string `json:"runner_id"`
-		Capacity int    `json:"capacity"`
-		WaitMS   int    `json:"wait_ms"`
-		Warmups  bool   `json:"accept_warmups"`
+		RunnerID  string `json:"runner_id"`
+		Capacity  int    `json:"capacity"`
+		WaitMS    int    `json:"wait_ms"`
+		Warmups   bool   `json:"accept_warmups"`
+		RestoreV3 bool   `json:"accept_restore_v3"`
 	}
 	if !decodeJSON(w, r, &in) || !uuidPattern.MatchString(in.RunnerID) || in.Capacity < 1 || in.Capacity > 6 || in.WaitMS < 0 || in.WaitMS > 20000 {
 		writeProblem(w, r, 400, "INVALID_REQUEST", "Lease request is invalid")
 		return
 	}
 	digest := sha256.Sum256([]byte(h.runnerToken))
-	v, e := h.repository.LeaseWaiting(r.Context(), in.RunnerID, in.Capacity, digest[:], time.Duration(in.WaitMS)*time.Millisecond, in.Warmups)
+	v, e := h.repository.LeaseWaiting(r.Context(), in.RunnerID, in.Capacity, digest[:], time.Duration(in.WaitMS)*time.Millisecond, in.Warmups, in.RestoreV3)
 	if errors.Is(e, pgx.ErrNoRows) {
 		w.WriteHeader(204)
 		return

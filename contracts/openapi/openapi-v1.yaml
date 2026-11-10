@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: CppDefense API
-  version: 1.1.0
-  summary: Public application and private runner contracts for CppDefense 2.1.0
+  version: 3.0.0
+  summary: Public application and private runner contracts for CppDefense 3.0.0
   license:
     name: Proprietary source-available
 servers:
@@ -733,12 +733,20 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [selection_mode, candidate_id, entity_mode, time_limit_seconds, wheel_size]
+              required: [selection_mode, entity_mode, time_limit_seconds, wheel_size]
               properties:
                 selection_mode: { enum: [automatic, manual] }
                 candidate_id:
                   type: string
                   description: Empty for automatic mode; candidate UUID for manual mode
+                candidate_ids:
+                  type: array
+                  maxItems: 5
+                  uniqueItems: true
+                  items: { $ref: '#/components/schemas/Uuid' }
+                  description: Required manual targets in func_X order; omit for legacy single-target clients
+                hidden_count: { type: integer, minimum: 1, maximum: 5, default: 1 }
+                signatures_visible: { type: boolean, default: true }
                 entity_mode:
                   enum: [functions_only, functions_classes_structs]
                 time_limit_seconds: { type: integer, minimum: 60, maximum: 1800 }
@@ -1291,9 +1299,13 @@ paths:
                   maximum: 20000
                   description: Wait for a PostgreSQL job notification when the queue is empty; zero preserves immediate polling.
                 accept_warmups:
+                  description: Opt in to background submission warmups
                   type: boolean
                   default: false
-                  description: Opt in to background warm_submission jobs; legacy runners never receive them.
+                accept_restore_v3:
+                  description: Runner supports multiple restoration targets and complete definitions
+                  type: boolean
+                  default: false
       responses:
         '200':
           description: One job leased
@@ -1917,6 +1929,12 @@ components:
           format: date-time
         selected_candidate_id:
           oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+        signatures_visible: { type: boolean }
+        hidden_count: { type: integer, minimum: 0, maximum: 5 }
+        challenges:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/SelectedFunction' }
         wheel_candidates:
           type: array
           items: { $ref: '#/components/schemas/WheelCandidate' }
@@ -1932,6 +1950,8 @@ components:
       additionalProperties: false
       required: [function_name, entity_type, file_path, signature, begin_line, end_line, masked_source]
       properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        label: { type: string, pattern: '^func_[1-5]$' }
         function_name:
           type: string
         entity_type:
@@ -1948,9 +1968,8 @@ components:
           minimum: 1
         masked_source:
           type: string
-          minLength: 1
           maxLength: 4194304
-          description: Complete selected source file with only the chosen entity body removed
+          description: Legacy single-target masked source; new tasks load masked files from repository endpoints
     WheelCandidate:
       type: object
       additionalProperties: false
@@ -2056,6 +2075,25 @@ components:
           oneOf:
             - $ref: '#/components/schemas/WorkerSelectedFunction'
             - type: 'null'
+        signatures_visible: { type: boolean }
+        restore_targets:
+          type: array
+          maxItems: 5
+          items:
+            allOf:
+              - $ref: '#/components/schemas/RestoreTarget'
+    RestoreTarget:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        label: { type: string }
+        function_name: { type: string }
+        entity_type: { enum: [function, class, struct] }
+        file_path: { type: string }
+        signature_begin: { type: integer, minimum: 0 }
+        body_begin: { type: integer, minimum: 0 }
+        body_end: { type: integer, minimum: 1 }
+        source_sha256: { $ref: '#/components/schemas/Sha256' }
     PrepareJobInput:
       type: object
       additionalProperties: false

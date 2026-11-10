@@ -318,6 +318,53 @@ let defensePoll;
 let defenseRefreshInFlight = false;
 let repositoryLoaded = false;
 let activeChallenge = null;
+let restoreTasks = [];
+let restoreDrafts = {};
+let restoreDraftDefense = "";
+let signaturesVisible = true;
+let teacherSelectedIDs = [];
+
+function rememberRestoreDraft() {
+  if (restoreTasks.length && activeChallenge?.id) restoreDrafts[activeChallenge.id] = document.querySelector("#answer").value;
+}
+
+async function selectRestoreTab(id, openFile = true) {
+  rememberRestoreDraft();
+  activeChallenge = restoreTasks.find(task => task.id === id) || restoreTasks[0];
+  if (!activeChallenge) return;
+  document.querySelector("#answer").value = restoreDrafts[activeChallenge.id] || "";
+  const signature = document.querySelector("#answer-signature");
+  const closing = document.querySelector("#answer-closing");
+  signature.classList.toggle("hidden", !signaturesVisible);
+  closing.classList.toggle("hidden", !signaturesVisible);
+  signature.textContent = signaturesVisible ? activeChallenge.signature.trim().replace(/\{\s*$/, "").trimEnd() + " {" : "";
+  closing.textContent = signaturesVisible ? (["class", "struct"].includes(activeChallenge.entity_type) ? "};" : "}") : "";
+  document.querySelectorAll("#restore-tabs button").forEach(button => {
+    const selected = button.dataset.targetId === activeChallenge.id;
+    button.classList.toggle("is-active", selected); button.setAttribute("aria-selected", String(selected));
+  });
+  renderAnswerHighlight();
+  if (openFile && repositoryLoaded) await openRepositoryFile(activeChallenge.file_path);
+}
+
+function updateRestoreTasks(value) {
+  if (restoreDraftDefense !== value.id) {
+    restoreDraftDefense = value.id; restoreDrafts = {}; activeChallenge = null;
+    try { restoreDrafts = JSON.parse(value.current_draft || "{}"); } catch { restoreDrafts = {}; }
+    if (!restoreDrafts || Array.isArray(restoreDrafts) || typeof restoreDrafts !== "object") restoreDrafts = {};
+  }
+  restoreTasks = value.challenges || [];
+  signaturesVisible = value.signatures_visible !== false;
+  const root = document.querySelector("#restore-tabs");
+  if (!root) return;
+  root.classList.toggle("hidden", !restoreTasks.length);
+  root.replaceChildren(...restoreTasks.map(task => {
+    const button = node("button", "secondary-button"); button.type = "button";
+    button.textContent = task.label; button.dataset.targetId = task.id; button.setAttribute("role", "tab");
+    button.onclick = () => selectRestoreTab(task.id).catch(error => { document.querySelector("#defense-status").textContent = error.message; });
+    return button;
+  }));
+}
 let studentDefenseMode = "restore";
 let hideEdits = {};
 let hideEditingPath = "";
@@ -332,7 +379,11 @@ function rememberHideEdit() {
   else hideEdits[hideEditingPath] = value;
 }
 function defenseAnswer() {
-  if (studentDefenseMode !== "hide_seek") return document.querySelector("#answer").value;
+  if (studentDefenseMode !== "hide_seek") {
+    if (!restoreTasks.length) return document.querySelector("#answer").value;
+    rememberRestoreDraft();
+    return JSON.stringify(Object.fromEntries(restoreTasks.map(task => [task.id, restoreDrafts[task.id] || ""])));
+  }
   rememberHideEdit();
   return JSON.stringify(hideEdits);
 }
@@ -498,6 +549,7 @@ async function openRepositoryFile(filePath) {
   document.querySelector("#source-title").textContent = value.path + (value.masked ? " · функция скрыта" : "");
   renderStudentSource(value.content, value.path);
   if (studentDefenseMode === "hide_seek") {
+    document.querySelector("#answer-signature").classList.remove("hidden");
     hideEditingPath = value.path;
     hideEditingAllowed = value.editable === true;
     hideEditingOriginal = value.content;
@@ -512,15 +564,17 @@ async function openRepositoryFile(filePath) {
 
 function renderStudentSource(content, filePath) {
   const code = document.querySelector("#source-code code");
-  const selected = activeChallenge?.file_path === filePath;
+  const tasks = restoreTasks.length ? restoreTasks : (activeChallenge ? [activeChallenge] : []);
   code.replaceChildren(...content.split("\n").map((line, index) => {
-    const marked = selected && index + 1 >= activeChallenge.begin_line && index + 1 <= activeChallenge.end_line;
+    const task = tasks.find(task => task.file_path === filePath && index + 1 >= task.begin_line && index + 1 <= task.end_line);
+    const marked = Boolean(task);
     const span = node("span", marked ? "source-line source-line--restore" : "source-line");
     span.innerHTML = highlightCpp(line) || " ";
+    if (task?.id) { span.title = task.label; span.style.cursor = "pointer"; span.onclick = () => selectRestoreTab(task.id); }
     return span;
   }));
   document.querySelectorAll("#repository-files button").forEach(button => {
-    const target = button.dataset.path === activeChallenge?.file_path;
+    const target = tasks.some(task => task.file_path === button.dataset.path);
     button.classList.toggle("repository-file--restore", target);
     if (target) {
       button.title = `${button.dataset.path} · здесь восстанавливается функция`;
@@ -630,8 +684,8 @@ function settleWheel(selectedID, challenge) {
     wheelSettleAnimation?.cancel();
     positionWheelLabels(finalRotation);
     wheel.classList.add("is-selected");
-    label.textContent = challenge.function_name;
-    label.title = challenge.signature;
+    label.textContent = restoreTasks.length > 1 ? restoreTasks.map(task => task.label).join(", ") : challenge.function_name;
+    label.title = restoreTasks.length > 1 ? `Выбрано элементов: ${restoreTasks.length}` : challenge.signature;
   };
   // Animation is decoration, never a prerequisite for displaying the task.
   try {
@@ -684,6 +738,8 @@ document.querySelectorAll("[data-start-defense]").forEach(button => {
     stopDefensePolling();
     defenseID = undefined;
     activeChallenge = null;
+    restoreTasks = []; restoreDrafts = {}; restoreDraftDefense = "";
+    document.querySelector("#restore-tabs")?.replaceChildren();
     studentDefenseMode = "restore";
     hideEdits = {}; hideEditingPath = ""; hideDraftLoaded = false;
     document.querySelector("#answer").value = "";
@@ -722,7 +778,7 @@ async function refreshDefense() {
     document.querySelector("#save-draft").disabled = !taskReady;
     document.querySelector("#submit-attempt").disabled = !taskReady;
     const editorHint = document.querySelector(".editor-column .pane-title span:last-child");
-    if (editorHint) editorHint.textContent = hide ? "файл целиком" : "без внешних скобок";
+    if (editorHint) editorHint.textContent = hide ? "файл целиком" : value.signatures_visible === false ? "полное определение со скобками" : "без внешних скобок";
     document.querySelector(".wheel-column .wheel-stage")?.classList.toggle("hidden", hide);
     document.querySelector(".wheel-column .eyebrow")?.classList.toggle("hidden", hide);
     document.querySelector("#answer-closing")?.classList.toggle("hidden", hide);
@@ -730,7 +786,7 @@ async function refreshDefense() {
     if (hint) hint.textContent = hide ? "Изменяйте исходники и заголовки. Тесты и настройки доступны только для чтения." : "Выбранная сущность скрыта во всех просмотрах";
     draftVersion = value.draft_version || draftVersion;
     renderWheelCandidates(value.wheel_candidates);
-    if (!hide && value.current_draft && !document.querySelector("#answer").value) {
+    if (!hide && !value.challenges?.length && value.current_draft && !document.querySelector("#answer").value) {
       document.querySelector("#answer").value = value.current_draft;
       renderAnswerHighlight();
     }
@@ -744,13 +800,19 @@ async function refreshDefense() {
       await loadRepository();
     } else if (hide && value.preparation_error) status.textContent = value.preparation_error;
     if (value.challenge && value.status === "active") {
-      activeChallenge = value.challenge;
-      document.querySelector("#answer-signature").textContent = value.challenge.signature.trim().replace(/\{\s*$/, "").trimEnd() + " {";
-      document.querySelector("#answer-closing").textContent = ["class", "struct"].includes(value.challenge.entity_type) ? "};" : "}";
-      status.textContent = `${value.challenge.signature} · строки ${value.challenge.begin_line}–${value.challenge.end_line}`;
+      if (value.challenges?.length) {
+        rememberRestoreDraft(); updateRestoreTasks(value);
+        await selectRestoreTab(activeChallenge?.id || restoreTasks[0].id, false);
+      } else {
+        activeChallenge = value.challenge;
+        document.querySelector("#answer-signature").classList.remove("hidden");
+        document.querySelector("#answer-signature").textContent = value.challenge.signature.trim().replace(/\{\s*$/, "").trimEnd() + " {";
+        document.querySelector("#answer-closing").textContent = ["class", "struct"].includes(value.challenge.entity_type) ? "};" : "}";
+      }
+      status.textContent = restoreTasks.length ? `Восстановите элементов: ${restoreTasks.length} · ${signaturesVisible ? "сигнатуры видны" : "введите полные определения"}` : `${value.challenge.signature} · строки ${value.challenge.begin_line}–${value.challenge.end_line}`;
       if (!repositoryLoaded) {
         document.querySelector("#source-code code").textContent = value.challenge.masked_source || "Замаскированный исходник недоступен";
-        await loadRepository(value.challenge.file_path);
+        await loadRepository(activeChallenge.file_path);
       }
       // Display essential content first, then update the optional wheel.
       try { settleWheel(value.selected_candidate_id, value.challenge); }
@@ -1053,10 +1115,19 @@ function setConfigurationError(message = "") {
 
 function selectTeacherCandidate(candidate) {
   const form = document.querySelector("#configure-defense-form");
-  form.elements.candidate_id.value = candidate.id;
+  if (teacherSelectedIDs.includes(candidate.id)) teacherSelectedIDs = teacherSelectedIDs.filter(id => id !== candidate.id);
+  else {
+    const limit = Number(form.elements.hidden_count.value);
+    if (teacherSelectedIDs.length >= limit) { setConfigurationError(`Уже выбрано ${limit}. Снимите выбор или увеличьте количество.`); return; }
+    teacherSelectedIDs.push(candidate.id);
+  }
+  form.elements.candidate_id.value = teacherSelectedIDs[0] || "";
   const selected = document.querySelector("#selected-candidate");
-  selected.textContent = `${entityLabels[candidate.entity_type] || "Сущность"}: ${candidate.signature.trim()} · ${candidate.file_path}:${candidate.begin_line}–${candidate.end_line}${candidate.is_test_file ? " · тестовый файл" : ""}`;
-  document.querySelectorAll(".teacher-entity-option").forEach(option => option.classList.toggle("is-selected", option.dataset.candidateId === candidate.id));
+  selected.textContent = teacherSelectedIDs.map((id, index) => {
+    const item = teacherDefense.candidate_catalog.find(c => c.id === id);
+    return `func_${index + 1}: ${item.signature.trim()} · ${item.file_path}:${item.begin_line}–${item.end_line}`;
+  }).join("\n") || "Выберите элементы для восстановления";
+  document.querySelectorAll(".teacher-entity-option").forEach(option => option.classList.toggle("is-selected", teacherSelectedIDs.includes(option.dataset.candidateId)));
   setConfigurationError();
 }
 
@@ -1078,7 +1149,7 @@ function renderTeacherEntities(path, source) {
     const code = node("pre", "teacher-entity-option__code", lines.slice(Math.max(0, candidate.begin_line - 1), candidate.end_line).join("\n"));
     button.append(title, meta, code);
     button.onclick = () => selectTeacherCandidate(candidate);
-    if (document.querySelector('#configure-defense-form [name="candidate_id"]').value === candidate.id) button.classList.add("is-selected");
+    if (teacherSelectedIDs.includes(candidate.id)) button.classList.add("is-selected");
     return button;
   }));
 }
@@ -1131,6 +1202,7 @@ function syncConfigurationMode() {
   document.querySelector("#selected-candidate").classList.toggle("hidden", !manual);
   if (!manual) {
     form.elements.candidate_id.value = "";
+    teacherSelectedIDs = [];
     setConfigurationError();
   } else if (teacherFilePath && teacherSourceCache.has(`${teacherDefense.id}:${teacherFilePath}`)) {
     renderTeacherEntities(teacherFilePath, teacherSourceCache.get(`${teacherDefense.id}:${teacherFilePath}`).content);
@@ -1138,6 +1210,7 @@ function syncConfigurationMode() {
 }
 
 async function choosePendingDefense(defense) {
+  teacherSelectedIDs = [];
   clearTimeout(hideValidationTimer);
   hideMutations = (defense.teacher_mutations || []).map(value => ({...value})); hideSelection = null; renderHideMutations();
   teacherDefense = defense;
@@ -1181,9 +1254,10 @@ document.querySelector('#configure-defense-form [name="defense_mode"]')?.addEven
 document.querySelector('#configure-defense-form [name="selection_mode"]')?.addEventListener("change", syncConfigurationMode);
 document.querySelector('#configure-defense-form [name="entity_mode"]')?.addEventListener("change", () => {
   const form = document.querySelector("#configure-defense-form");
+  teacherSelectedIDs = teacherSelectedIDs.filter(id => (teacherDefense?.candidate_catalog || []).some(candidate => candidate.id === id && teacherCandidateAllowed(candidate)));
   const selected = (teacherDefense?.candidate_catalog || []).find(candidate => candidate.id === form.elements.candidate_id.value);
   if (selected && !teacherCandidateAllowed(selected)) {
-    form.elements.candidate_id.value = "";
+    form.elements.candidate_id.value = teacherSelectedIDs[0] || "";
     document.querySelector("#selected-candidate").textContent = "Выбранная сущность недоступна в этом режиме. Выберите другую.";
   }
   if (teacherDefense && teacherFilePath && teacherSourceCache.has(`${teacherDefense.id}:${teacherFilePath}`)) {
@@ -1221,23 +1295,27 @@ document.querySelector("#configure-defense-form")?.addEventListener("submit", as
     setConfigurationError("Время должно быть от 1 до 30 минут, колесо — от 2 до 12 секторов.");
     return;
   }
-  if (mode === "manual" && !form.get("candidate_id")) {
-    setConfigurationError("Выберите сущность для восстановления.");
+  const hiddenCount = Number(form.get("hidden_count"));
+  if (!Number.isInteger(hiddenCount) || hiddenCount < 1 || hiddenCount > 5 || hiddenCount > wheelSize) {
+    setConfigurationError("Скройте от 1 до 5 элементов, не больше числа секторов колеса."); return;
+  }
+  if (mode === "manual" && teacherSelectedIDs.length !== hiddenCount) {
+    setConfigurationError(`Выберите ровно ${hiddenCount} непересекающихся элементов.`);
     return;
   }
   const catalog = (teacherDefense?.candidate_catalog || []).filter(teacherCandidateAllowed);
-  const selected = catalog.find(candidate => candidate.id === form.get("candidate_id"));
-  const nonTestCandidates = catalog.filter(candidate => !candidate.is_test_file && candidate.id !== selected?.id);
+  const selected = catalog.filter(candidate => teacherSelectedIDs.includes(candidate.id));
+  const nonTestCandidates = catalog.filter(candidate => !candidate.is_test_file && !selected.some(item => item.id === candidate.id));
   const enoughCandidates = mode === "automatic"
-    ? nonTestCandidates.length >= wheelSize
-    : Boolean(selected) && nonTestCandidates.length >= wheelSize - 1;
+    ? catalog.filter(candidate => !candidate.is_test_file).length >= wheelSize
+    : selected.length === hiddenCount && nonTestCandidates.length >= wheelSize - hiddenCount;
   if (!enoughCandidates) {
-    const available = mode === "automatic" ? nonTestCandidates.length : nonTestCandidates.length + (selected ? 1 : 0);
+    const available = mode === "automatic" ? catalog.filter(c => !c.is_test_file).length : nonTestCandidates.length + selected.length;
     setConfigurationError(`Для колеса из ${wheelSize} секторов недостаточно подходящих сущностей. Доступно: ${available}. Уменьшите число секторов или смените режим.`);
     return;
   }
   try {
-    await api(`/api/v1/defenses/${form.get("defense_id")}/configure`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection_mode: mode, candidate_id: mode === "manual" ? form.get("candidate_id") : "", entity_mode: form.get("entity_mode"), wheel_size: wheelSize, time_limit_seconds: minutes * 60 }) });
+    await api(`/api/v1/defenses/${form.get("defense_id")}/configure`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection_mode: mode, candidate_ids: mode === "manual" ? teacherSelectedIDs : [], hidden_count: hiddenCount, signatures_visible: form.get("signatures_visible") === "true", entity_mode: form.get("entity_mode"), wheel_size: wheelSize, time_limit_seconds: minutes * 60 }) });
     event.target.classList.add("hidden");
     teacherDefense = undefined;
     await loadPendingDefenses();

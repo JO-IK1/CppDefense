@@ -109,7 +109,20 @@ void ValidateRequest(const Json& r) {
     }
     (void)Seed(p["seed"]);
   } else {
-    Fields(p, {"project_root", "output_root", "selected_function", "answer"});
+    Fields(p, {"project_root", "output_root", "selected_function", "answer"}, {"full_definition", "additional_replacements"});
+    if (p.contains("full_definition")) Require(p["full_definition"].is_boolean(), "INVALID_REQUEST", "full_definition must be boolean");
+    if (p.contains("additional_replacements")) {
+      const auto& items = p["additional_replacements"];
+      Require(items.is_array() && items.size() <= 4, "INVALID_REQUEST", "At most five replacements are allowed");
+      for (const auto& item : items) {
+        Fields(item, {"selected_function", "answer", "full_definition"});
+        auto nested = r;
+        nested["payload"] = item;
+        nested["payload"]["project_root"] = p["project_root"];
+        nested["payload"]["output_root"] = p["output_root"];
+        ValidateRequest(nested);
+      }
+    }
     Path(p["output_root"]);
     Require(Text(p["answer"], 0, 1048576), "INVALID_REQUEST", "Answer exceeds 1 MiB");
     const auto& f = p["selected_function"];

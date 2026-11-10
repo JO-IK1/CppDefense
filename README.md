@@ -1,4 +1,4 @@
-# CppDefense
+# CppDefense 3.0.0
 
 **English** | [Русский](README.ru.md)
 
@@ -7,12 +7,42 @@
 Copyright (c) 2026 Zakharev Georgii. All rights reserved.
 
 CppDefense turns a CMake-based C++ project into a timed code-restoration
-exercise. It discovers suitable functions, selects one reproducibly, hides its
-body, accepts a body-only answer, then runs CMake, the build, and CTest in an
-isolated workspace. The repository contains both the original local CLI and a
+exercise. The web restoration mode hides 1–5 functions, classes, or structures,
+including mixed selections. Teachers decide whether signatures remain visible:
+students restore bodies or complete definitions in separate `func_X` tabs, then
+check all answers with one isolated CMake build and CTest run. The repository contains both the original local CLI and a
 web platform for students, teachers, and administrators.
 
 ## Highlights
+
+### New in 3.0.0: multi-element restoration
+
+- Teacher settings: 1–5 hidden elements, visible/hidden signatures, manual or
+  automatic selection, 2–12 wheel sectors, and 1–30 minutes. The hidden count
+  cannot exceed the wheel size. Automatic selection excludes tests; manual
+  selection may include them. The existing 67% largest / 33% random wheel pool
+  policy is retained.
+- Manual selection supports mixed functions/classes/structures. Click an element
+  again to deselect it. Overlapping selections (a class and its own method) are
+  rejected; automatic selection also avoids overlapping definitions.
+- Every selected definition has a stable server ID and a student-facing label
+  `func_1`…`func_5`. Tabs retain separate drafts, open the corresponding file,
+  and highlight the selected locations. Submit checks the entire edited project,
+  not each answer separately. All answers must pass together.
+- With signatures hidden, the selected definition is replaced with `/* func_X */`;
+  the student writes its signature and braces, with a trailing semicolon for a
+  class/structure. Other declarations, including headers, remain untouched.
+  Student API responses and wheel labels do not expose hidden signatures.
+- Exact-reference acceptance requires **every** answer to match the verified
+  original. Otherwise all replacements are applied atomically in an isolated
+  copy and the usual compilation/tests run. Original sources are immutable.
+- Existing single-body defenses and the local CLI keep their existing behavior.
+  Hide-and-seek behavior is unchanged. New jobs require a v3-capable runner.
+
+Project release numbers do not change external dependency versions or the
+backward-compatible worker protocol `1.0` / manifest schema versions.
+
+### Platform
 
 - C++23 core, interactive `cpp-defense` CLI, and headless JSON worker;
 - deterministic candidate selection and UUID-scoped workspaces;

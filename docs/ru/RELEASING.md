@@ -19,8 +19,8 @@
 8. Создайте и отправьте annotated tag:
 
    ```sh
-   git tag -a v2.1.0 -m "CppDefense 2.1.0"
-   git push origin v2.1.0
+   git tag -a v3.0.0 -m "CppDefense 3.0.0"
+   git push origin v3.0.0
    ```
 
 Tag публикует platform archives через GitHub Actions. CMake install включает

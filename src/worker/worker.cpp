@@ -163,13 +163,9 @@ bool ContainsPath(const fs::path& parent, const fs::path& child) {
   return true;
 }
 
-Json Materialize(const fs::path& session, const fs::path& project, const Json& p) {
-  ValidateTree(project);
-  const auto output = Resolve(session, p["output_root"].get<std::string>(), false);
-  Require(!ContainsPath(project, output) && !ContainsPath(output, project),
-          "INVALID_PATH", "Input and output paths must not overlap");
-  Require(fs::is_directory(output.parent_path()), "INVALID_PATH", "Output parent must exist");
-  Require(!fs::exists(output), "OUTPUT_EXISTS", "Output already exists");
+struct Replacement { std::string file; std::size_t begin; std::size_t end; std::string answer; };
+
+Replacement PrepareReplacement(const fs::path& project, const Json& p) {
   const auto& selected = p["selected_function"];
   const auto relative = selected["file_path"].get<std::string>();
   const auto input_file = Resolve(project, relative);
@@ -194,18 +190,67 @@ Json Materialize(const fs::path& session, const fs::path& project, const Json& p
            entity.name == selected["function_name"].get<std::string>();
   });
   Require(match != parsed->end(), "INVALID_RANGE", "Selection is not a parsed entity");
-  const auto answer = p["answer"].get<std::string>();
-  Require(parser.ValidateBody(answer, relative).has_value(),
-          "INVALID_ANSWER", "Answer must stay inside the original entity body");
+  auto answer = p["answer"].get<std::string>();
+  if (p.value("full_definition", false)) {
+    // Parse in the original enclosing scope: constructors and member definitions
+    // may not be meaningful as standalone translation units.
+    auto expanded = source;
+    expanded.replace(signature, end - signature, answer);
+    const auto entities = parser.Parse(expanded, relative);
+    Require(entities.has_value(), "INVALID_ANSWER", "Definition cannot be parsed");
+    bool valid = false;
+    for (const auto& entity : *entities) {
+      if (EntityTypeName(entity.type) != selected_type || entity.name != selected["function_name"].get<std::string>()) continue;
+      if (entity.start_offset < signature || entity.body_end_offset > signature + answer.size()) continue;
+      const auto answer_begin = entity.start_offset - signature;
+      const auto answer_end = entity.body_end_offset - signature;
+      const auto prefix = answer.substr(0, answer_begin);
+      auto suffix = answer.substr(answer_end);
+      if (selected_type != "function") {
+        const auto first = suffix.find_first_not_of(" \t\r\n");
+        if (first != std::string::npos && suffix[first] == ';') suffix.erase(first, 1);
+      }
+      const auto blank = [](const std::string& text) { return text.find_first_not_of(" \t\r\n") == std::string::npos; };
+      if (blank(prefix) && blank(suffix)) {
+        // The original declaration's trailing semicolon remains in the source.
+        answer = answer.substr(answer_begin, answer_end - answer_begin);
+        valid = true; break;
+      }
+    }
+    Require(valid, "INVALID_ANSWER", "Expected one complete definition of the selected entity, without outside code");
+    return {relative, signature, end, answer};
+  }
+  Require(parser.ValidateBody(answer, relative).has_value(), "INVALID_ANSWER", "Answer must stay inside the original entity body");
+  return {relative, begin + 1, end - 1, answer};
+}
+
+Json Materialize(const fs::path& session, const fs::path& project, const Json& p) {
+  ValidateTree(project);
+  const auto output = Resolve(session, p["output_root"].get<std::string>(), false);
+  Require(!ContainsPath(project, output) && !ContainsPath(output, project), "INVALID_PATH", "Input and output paths must not overlap");
+  Require(fs::is_directory(output.parent_path()), "INVALID_PATH", "Output parent must exist");
+  Require(!fs::exists(output), "OUTPUT_EXISTS", "Output already exists");
+  std::vector<Replacement> replacements{PrepareReplacement(project, p)};
+  if (p.contains("additional_replacements")) {
+    for (const auto& item : p["additional_replacements"]) replacements.push_back(PrepareReplacement(project, item));
+  }
+  std::sort(replacements.begin(), replacements.end(), [](const auto& a, const auto& b) { return a.file != b.file ? a.file < b.file : a.begin > b.begin; });
+  std::map<std::string, std::string> modified;
+  std::string previous_file;
+  std::size_t previous_begin = 0;
+  for (const auto& replacement : replacements) {
+    if (replacement.file == previous_file) Require(replacement.end <= previous_begin, "INVALID_RANGE", "Selected definitions overlap");
+    if (!modified.contains(replacement.file)) modified[replacement.file] = Read(Resolve(project, replacement.file));
+    modified[replacement.file].replace(replacement.begin, replacement.end - replacement.begin, replacement.answer);
+    previous_file = replacement.file; previous_begin = replacement.begin;
+  }
 
   TemporaryTree staging(Resolve(session, ".attempt-" + NewSessionId(), false));
   fs::copy(project, staging.path(), fs::copy_options::recursive);
-  auto modified = source;
-  modified.replace(begin+1, end-begin-2, answer);
-  Write(Resolve(staging.path(), relative), modified);
+  for (const auto& [file, source] : modified) Write(Resolve(staging.path(), file), source);
   staging.Commit(output);
-  return {{"output_root", p["output_root"]}, {"modified_file", relative},
-          {"answer_sha256", Sha256(answer)}};
+  return {{"output_root", p["output_root"]}, {"modified_file", p["selected_function"]["file_path"]},
+          {"answer_sha256", Sha256(p["answer"].get<std::string>())}};
 }
 
 Json Execute(const fs::path& workspace, const Json& r) {

@@ -8,13 +8,14 @@ const source = await readFile(new URL("./app.js", import.meta.url), "utf8");
 function defenseBrowser() {
   const elements = new Map();
   const element = () => ({value: "", textContent: "", dataset: {}, style: {}, children: [],
-    addEventListener() {}, replaceChildren(...children) { this.children = children; },
+    addEventListener() {}, setAttribute(name, value) { this[name] = value; }, replaceChildren(...children) { this.children = children; },
     classList: {add() {}, remove() {}, toggle() {}}, querySelectorAll() { return []; }});
   const answer = element();
   elements.set("#answer", answer);
-  for (const selector of ["#defense-status", "#timer", "#defense-timer-bar", "#save-draft", "#submit-attempt", "#answer-signature", "#answer-closing", "#source-access-hint", "#repository-files", "#source-code code", "#source-title"]) elements.set(selector, element());
+  for (const selector of ["#defense-status", "#timer", "#defense-timer-bar", "#save-draft", "#submit-attempt", "#answer-signature", "#answer-closing", "#source-access-hint", "#repository-files", "#source-code code", "#source-title", "#restore-tabs"]) elements.set(selector, element());
   const context = browserContext(null, answer);
   context.document.querySelector = selector => elements.get(selector) || null;
+  context.document.createElement = () => element();
   vm.runInContext(source, context);
   vm.runInContext(`
     defenseID = "defense";
@@ -23,6 +24,42 @@ function defenseBrowser() {
   `, context);
   return {context, elements};
 }
+
+test("teacher can select a mixed set and toggle an element without losing the rest", () => {
+  const {context, elements} = defenseBrowser();
+  const form = {elements: {hidden_count: {value: "3"}, candidate_id: {value: ""}}};
+  elements.set("#configure-defense-form", form);
+  elements.set("#selected-candidate", {textContent: ""});
+  context.candidates = ["struct", "function", "function", "class"].map((type, index) => ({id: String(index), entity_type: type, signature: `${type} Item${index}`, file_path: "main.cpp", begin_line: index, end_line: index + 1}));
+  vm.runInContext(`teacherDefense = {candidate_catalog: candidates}; candidates.slice(0,3).forEach(selectTeacherCandidate);`, context);
+  assert.equal(vm.runInContext("teacherSelectedIDs.join(',')", context), "0,1,2");
+  vm.runInContext("selectTeacherCandidate(candidates[3])", context);
+  assert.equal(vm.runInContext("teacherSelectedIDs.length", context), 3);
+  vm.runInContext("selectTeacherCandidate(candidates[1])", context);
+  assert.equal(vm.runInContext("teacherSelectedIDs.join(',')", context), "0,2");
+  assert.match(elements.get("#selected-candidate").textContent, /func_1.*struct/);
+});
+
+test("multi-restore tabs retain separate drafts and hidden signatures never appear in boundaries", async () => {
+  const {context, elements} = defenseBrowser();
+  const tasks = [{id: "one", label: "func_1", signature: "", function_name: "func_1", entity_type: "struct", file_path: "main.cpp", begin_line: 1, end_line: 1}, {id: "two", label: "func_2", signature: "", function_name: "func_2", entity_type: "function", file_path: "main.cpp", begin_line: 2, end_line: 2}];
+  context.value = {id: "defense", status: "active", defense_mode: "restore", signatures_visible: false, current_draft: JSON.stringify({one: "struct Box {int x;};", two: "int f(){return 1;}"}), challenge: tasks[0], challenges: tasks};
+  context.api = async url => url.endsWith("/repository") ? {items: [{path: "main.cpp"}]} : url.includes("/repository/file") ? {path: "main.cpp", content: "/* func_1 */\n/* func_2 */", masked: true} : context.value;
+  await vm.runInContext("refreshDefense()", context);
+  assert.equal(elements.get("#restore-tabs").children.length, 2);
+  assert.equal(elements.get("#answer").value, "struct Box {int x;};");
+  assert.equal(elements.get("#answer-signature").textContent, "");
+  assert.equal(elements.get("#answer-closing").textContent, "");
+  elements.get("#answer").value = "struct Box {int y;};";
+  await vm.runInContext('selectRestoreTab("two")', context);
+  assert.equal(elements.get("#answer").value, "int f(){return 1;}");
+  elements.get("#answer").value = "int f(){return 2;}";
+  await vm.runInContext("refreshDefense()", context);
+  await vm.runInContext('selectRestoreTab("one")', context);
+  assert.equal(elements.get("#answer").value, "struct Box {int y;};");
+  assert.deepEqual(JSON.parse(vm.runInContext("defenseAnswer()", context)), {one: "struct Box {int y;};", two: "int f(){return 2;}"});
+  assert.equal(elements.get("#submit-attempt").disabled, false);
+});
 
 test("student loads selected signature and source on ready-to-active transition", async () => {
   const {context, elements} = defenseBrowser();

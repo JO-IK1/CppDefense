@@ -1,0 +1,4 @@
+.restore-tabs { display:flex; flex-wrap:wrap; gap:.4rem; padding:.5rem; border-bottom:1px solid var(--border, #303641); }
+.restore-tabs button.is-active { outline:2px solid #b9f529; color:#b9f529; }
+.restore-tabs.hidden { display:none; }
+.selected-candidate { white-space:pre-line; }
