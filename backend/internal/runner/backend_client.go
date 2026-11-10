@@ -17,6 +17,7 @@ func (a *agent) lease(ctx context.Context) (postgres.Lease, bool, error) {
 		payload := map[string]any{"runner_id": a.config.RunnerID, "capacity": a.config.Slots}
 		if !a.legacyLease.Load() {
 			payload["wait_ms"] = 10000
+			payload["accept_warmups"] = true
 		}
 		body, _ := json.Marshal(payload)
 		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, a.config.Backend+"/api/v1/runner/jobs/lease", bytes.NewReader(body))
@@ -48,7 +49,11 @@ func (a *agent) lease(ctx context.Context) (postgres.Lease, bool, error) {
 }
 
 func (a *agent) heartbeatLoop(ctx context.Context, done <-chan struct{}, lease postgres.Lease, cancel context.CancelFunc) {
-	ticker := time.NewTicker(30 * time.Second)
+	interval := 30 * time.Second
+	if lease.Kind == "warm_submission" {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {

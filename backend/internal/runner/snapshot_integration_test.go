@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -145,8 +147,29 @@ TEST(Snapshot,FreshState){
 	if proof == nil || !result.OK() || result.CompileCommands != 0 {
 		t.Fatalf("persisted snapshot lost: %#v %#v", proof, result)
 	}
+	// A different defense session must reuse the approved version's warmup,
+	// while a different submission version must not share its identity.
+	otherSession := lease
+	otherSession.SessionID = "another-defense-session"
+	otherBuild, err := restarted.newBuildContext(ctx, original, otherSession)
+	if err != nil || otherBuild.Key != b.Key {
+		t.Fatalf("session invalidated warmup: %#v %v", otherBuild, err)
+	}
+	proof, result = restarted.verifyOriginal(ctx, original, otherSession)
+	if proof == nil || !result.OK() || result.CompileCommands != 0 {
+		t.Fatalf("new session rebuilt warmed version: %#v", result)
+	}
+	otherSession.SubmissionObjectKey = "normalized-submissions/different-version.zip"
+	otherBuild, err = restarted.newBuildContext(ctx, original, otherSession)
+	if err != nil || otherBuild.Key == b.Key {
+		t.Fatalf("versions share warmup key: %#v %v", otherBuild, err)
+	}
 	completed := make(chan postgres.Completion, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/heartbeat") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		var value postgres.Completion
 		if err := json.NewDecoder(r.Body).Decode(&value); err != nil {
 			t.Error(err)
@@ -157,6 +180,37 @@ TEST(Snapshot,FreshState){
 	defer server.Close()
 	a.config.Backend = server.URL
 	a.client = server.Client()
+	// Exercise the real background-job entry point, including ZIP extraction,
+	// cold snapshot creation and completion. A later session reuses its output.
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	for name, data := range files {
+		file, err := zipWriter.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = file.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	warming := agent{config: a.config, client: server.Client(), storage: fakeStorage{data: archive.Bytes()}}
+	warming.config.BuildCacheDir = filepath.Join(root, "background-snapshots")
+	warmLease := postgres.Lease{JobID: "0199a123-4567-7abc-8def-0123456789ab", Kind: "warm_submission", SessionID: "0199a123-4568-7abc-8def-0123456789ab", SubmissionObjectKey: "normalized-submissions/0199a123-4569-7abc-8def-0123456789ab.zip"}
+	if err = warming.execute(ctx, warmLease); err != nil {
+		t.Fatal(err)
+	}
+	warmed := <-completed
+	if warmed.Outcome != "passed" || warmed.Timings == nil || warmed.Timings.CompileCommands != 3 || warmed.ReferenceResult != nil {
+		t.Fatalf("warmup completion: %#v", warmed)
+	}
+	warmLease.SessionID = "later-session"
+	warmProof, warmResult := warming.verifyOriginal(ctx, original, warmLease)
+	if warmProof == nil || !warmResult.OK() || warmResult.CompileCommands != 0 {
+		t.Fatalf("warmup not reused by defense: %#v", warmResult)
+	}
 	worker := filepath.Join(root, "materializer")
 	script := `#!/bin/sh
 set -eu
