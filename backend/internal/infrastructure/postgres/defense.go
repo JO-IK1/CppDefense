@@ -25,6 +25,9 @@ type DefenseRepository struct{ db *Database }
 func NewDefenseRepository(db *Database) *DefenseRepository { return &DefenseRepository{db: db} }
 
 type Defense struct {
+	SignaturesVisible   bool                `json:"signatures_visible"`
+	HiddenCount         int                 `json:"hidden_count"`
+	Challenges          []Challenge         `json:"challenges,omitempty"`
 	PreparationTimings  *JobTimings         `json:"preparation_timings,omitempty"`
 	DefenseMode         string              `json:"defense_mode"`
 	ErrorCount          int                 `json:"error_count"`
@@ -56,28 +59,34 @@ type Defense struct {
 	CreatedAt           time.Time           `json:"created_at"`
 }
 type WheelCandidate struct {
-	ID           string `json:"id"`
-	Rank         int    `json:"rank"`
-	FunctionName string `json:"function_name"`
-	Signature    string `json:"signature"`
-	FilePath     string `json:"file_path"`
-	LineCount    int    `json:"line_count"`
-	EntityType   string `json:"entity_type"`
-	IsTestFile   bool   `json:"is_test_file"`
-	BeginLine    int    `json:"begin_line"`
-	EndLine      int    `json:"end_line"`
+	SignatureBegin int64  `json:"-"`
+	BodyEnd        int64  `json:"-"`
+	ID             string `json:"id"`
+	Rank           int    `json:"rank"`
+	FunctionName   string `json:"function_name"`
+	Signature      string `json:"signature"`
+	FilePath       string `json:"file_path"`
+	LineCount      int    `json:"line_count"`
+	EntityType     string `json:"entity_type"`
+	IsTestFile     bool   `json:"is_test_file"`
+	BeginLine      int    `json:"begin_line"`
+	EndLine        int    `json:"end_line"`
 }
 type DefenseSourceAccess struct {
-	DefenseMode   string
-	HideMutations []hideseek.Mutation
-	StudentView   bool
-	ObjectKey     string
-	SelectedFile  string
-	BodyBegin     int64
-	BodyEnd       int64
-	MaskSelected  bool
+	Targets           []RestoreTarget
+	SignaturesVisible bool
+	DefenseMode       string
+	HideMutations     []hideseek.Mutation
+	StudentView       bool
+	ObjectKey         string
+	SelectedFile      string
+	BodyBegin         int64
+	BodyEnd           int64
+	MaskSelected      bool
 }
 type Challenge struct {
+	ID           string `json:"id,omitempty"`
+	Label        string `json:"label,omitempty"`
 	FunctionName string `json:"function_name"`
 	EntityType   string `json:"entity_type"`
 	FilePath     string `json:"file_path"`
@@ -192,6 +201,9 @@ func (r *DefenseRepository) Get(ctx context.Context, actor, id string) (Defense,
 			return Defense{}, rows.Err()
 		}
 	}
+	if err := r.decorateRestore(ctx, actor, &v); err != nil {
+		return Defense{}, err
+	}
 	if err := r.hideView(ctx, actor, &v); err != nil {
 		return Defense{}, err
 	}
@@ -263,7 +275,7 @@ func (r *DefenseRepository) candidateCatalog(ctx context.Context, defenseID stri
 	return values, rows.Err()
 }
 
-func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mode, candidateID, entityMode string, seconds, wheelSize int) (Defense, error) {
+func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mode, candidateID, entityMode string, seconds, wheelSize int, restore ...RestoreOptions) (Defense, error) {
 	if (mode != "automatic" && mode != "manual") ||
 		(entityMode != "functions_only" && entityMode != "functions_classes_structs") ||
 		seconds < 60 || seconds > 1800 || wheelSize < 2 || wheelSize > 12 {
@@ -280,14 +292,14 @@ func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mod
 	if e != nil || !allowed {
 		return Defense{}, appauth.ErrConflict
 	}
-	rows, e := tx.Query(ctx, `select id,rank,function_name,signature,file_path,line_count,entity_type,is_test_file,start_line,end_line from defense_candidates where defense_id=$1 order by rank`, defenseID)
+	rows, e := tx.Query(ctx, `select id,rank,function_name,signature,file_path,line_count,entity_type,is_test_file,start_line,end_line,signature_begin_offset,body_end_offset from defense_candidates where defense_id=$1 order by rank`, defenseID)
 	if e != nil {
 		return Defense{}, e
 	}
 	var catalog []WheelCandidate
 	for rows.Next() {
 		var candidate WheelCandidate
-		if e = rows.Scan(&candidate.ID, &candidate.Rank, &candidate.FunctionName, &candidate.Signature, &candidate.FilePath, &candidate.LineCount, &candidate.EntityType, &candidate.IsTestFile, &candidate.BeginLine, &candidate.EndLine); e != nil {
+		if e = rows.Scan(&candidate.ID, &candidate.Rank, &candidate.FunctionName, &candidate.Signature, &candidate.FilePath, &candidate.LineCount, &candidate.EntityType, &candidate.IsTestFile, &candidate.BeginLine, &candidate.EndLine, &candidate.SignatureBegin, &candidate.BodyEnd); e != nil {
 			rows.Close()
 			return Defense{}, e
 		}
@@ -301,7 +313,17 @@ func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mod
 		return Defense{}, e
 	}
 	wheel, selected, ok := buildWheel(catalog, mode, candidateID, seed, wheelSize)
+	var targets []WheelCandidate
+	if len(restore) > 0 {
+		wheel, targets, ok = selectRestoreTargets(catalog, mode, candidateID, seed, wheelSize, restore[0])
+		if ok {
+			selected = targets[0]
+		}
+	}
 	if !ok {
+		if len(restore) > 0 {
+			return Defense{}, ErrRestoreSelection
+		}
 		return Defense{}, appauth.ErrConflict
 	}
 	if _, e = tx.Exec(ctx, `update defense_candidates set is_selected=false,wheel_rank=null where defense_id=$1`, defenseID); e != nil {
@@ -314,6 +336,16 @@ func (r *DefenseRepository) Configure(ctx context.Context, actor, defenseID, mod
 	}
 	if _, e = tx.Exec(ctx, `update defenses set defense_mode='restore',hide_mutations='[]'::jsonb,hide_report=null,hide_error=null,preparation_timings=null,selected_candidate_id=$2,selection_mode=$3,time_limit_seconds=$4,wheel_size=$5,entity_mode=$6,status='preparing' where id=$1 and status='ready'`, defenseID, selected.ID, mode, seconds, wheelSize, entityMode); e != nil {
 		return Defense{}, e
+	}
+	if len(restore) > 0 {
+		if _, e = tx.Exec(ctx, `update defenses set signatures_visible=$2 where id=$1`, defenseID, restore[0].SignaturesVisible); e != nil {
+			return Defense{}, e
+		}
+		for i, target := range targets {
+			if _, e = tx.Exec(ctx, `insert into defense_restore_targets(defense_id,candidate_id,ordinal) values($1,$2,$3)`, defenseID, target.ID, i+1); e != nil {
+				return Defense{}, e
+			}
+		}
 	}
 	job, _ := domain.NewUUIDv7()
 	if _, e = tx.Exec(ctx, `insert into runner_jobs(id,kind,defense_id,timeout_seconds)values($1,'prepare_defense',$2,300)`, job, defenseID); e != nil {
@@ -423,6 +455,12 @@ func (r *DefenseRepository) SourceAccess(ctx context.Context, actor, defenseID s
 	if access.DefenseMode == "hide_seek" {
 		access.MaskSelected = false
 	}
+	if access.DefenseMode != "hide_seek" {
+		access.Targets, access.SignaturesVisible, e = r.restoreTargets(ctx, defenseID)
+		if e != nil {
+			return DefenseSourceAccess{}, e
+		}
+	}
 	if access.StudentView && access.DefenseMode != "hide_seek" {
 		var hidden bool
 		if e = r.db.pool.QueryRow(ctx, `select exists(select 1 from defenses d join defenses other on other.submission_version_id=d.submission_version_id where d.id=$1 and other.defense_mode='hide_seek' and other.status in('ready','preparing','active'))`, defenseID).Scan(&hidden); e != nil {
@@ -531,6 +569,8 @@ func jsonRaw(v []byte) any {
 }
 
 type Lease struct {
+	RestoreTargets      []RestoreTarget     `json:"restore_targets,omitempty"`
+	SignaturesVisible   bool                `json:"signatures_visible"`
 	QueueWaitMS         int64               `json:"queue_wait_ms"`
 	DefenseMode         string              `json:"defense_mode"`
 	HideMutations       []hideseek.Mutation `json:"hide_mutations,omitempty"`
@@ -560,6 +600,7 @@ type SelectedFunction struct {
 
 func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots int, credentialHash []byte, warmups ...bool) (Lease, error) {
 	acceptWarmups := len(warmups) > 0 && warmups[0]
+	acceptRestoreV3 := len(warmups) > 1 && warmups[1]
 	tx, e := r.db.pool.BeginTx(ctx, pgx.TxOptions{})
 	if e != nil {
 		return Lease{}, e
@@ -601,7 +642,7 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 		}
 	}
 	var v Lease
-	e = tx.QueryRow(ctx, `select j.id,j.kind::text,coalesce(j.defense_id::text,''),j.check_attempt_id,coalesce(d.session_id,sv.id),sv.normalized_object_key,coalesce(d.seed::text,'0'),coalesce(d.wheel_size,12),a.answer,greatest(0,extract(epoch from (statement_timestamp()-greatest(j.created_at,j.available_at)))*1000)::bigint from runner_jobs j left join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=coalesce(d.submission_version_id,j.submission_version_id) left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() and ($1 or j.kind<>'warm_submission') order by j.priority desc,j.created_at for update of j skip locked limit 1`, acceptWarmups).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer, &v.QueueWaitMS)
+	e = tx.QueryRow(ctx, `select j.id,j.kind::text,coalesce(j.defense_id::text,''),j.check_attempt_id,coalesce(d.session_id,sv.id),sv.normalized_object_key,coalesce(d.seed::text,'0'),coalesce(d.wheel_size,12),a.answer,greatest(0,extract(epoch from (statement_timestamp()-greatest(j.created_at,j.available_at)))*1000)::bigint from runner_jobs j left join defenses d on d.id=j.defense_id join submission_versions sv on sv.id=coalesce(d.submission_version_id,j.submission_version_id) left join check_attempts a on a.id=j.check_attempt_id where j.state in('queued','retry_wait') and j.available_at<=clock_timestamp() and ($1 or j.kind<>'warm_submission') and ($2 or not exists(select 1 from defense_restore_targets rt where rt.defense_id=j.defense_id)) order by j.priority desc,j.created_at for update of j skip locked limit 1`, acceptWarmups, acceptRestoreV3).Scan(&v.JobID, &v.Kind, &v.DefenseID, &v.AttemptID, &v.SessionID, &v.SubmissionObjectKey, &v.Seed, &v.TopN, &v.Answer, &v.QueueWaitMS)
 	if e == pgx.ErrNoRows {
 		if commitErr := tx.Commit(ctx); commitErr != nil {
 			return Lease{}, commitErr
@@ -643,6 +684,10 @@ func (r *DefenseRepository) Lease(ctx context.Context, runnerID string, slots in
 	}
 	if v.DefenseMode == "hide_seek" {
 		return v, nil
+	}
+	v.RestoreTargets, v.SignaturesVisible, e = r.restoreTargets(ctx, v.DefenseID)
+	if e != nil {
+		return Lease{}, e
 	}
 	if v.Kind == "check_attempt" {
 		var selected SelectedFunction

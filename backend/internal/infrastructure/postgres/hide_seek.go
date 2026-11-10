@@ -19,6 +19,7 @@ func (r *DefenseRepository) hideView(ctx context.Context, actor string, value *D
 	}
 	if value.DefenseMode == "hide_seek" {
 		value.Challenge = nil
+		value.Challenges = nil
 		value.SelectedCandidateID = nil
 		value.WheelCandidates = []WheelCandidate{}
 		if value.Status == "preparing" {
@@ -40,6 +41,7 @@ func (r *DefenseRepository) hideView(ctx context.Context, actor string, value *D
 		}
 		if hidden {
 			value.Challenge = nil
+			value.Challenges = nil
 			value.CurrentDraft = ""
 			value.WheelCandidates = []WheelCandidate{}
 			value.PreparationError = "Просмотр исходников временно закрыт: для этой версии работы не завершена защита «Прятки». Обратитесь к преподавателю."

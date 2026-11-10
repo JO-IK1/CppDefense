@@ -157,14 +157,27 @@ func (a *agent) check(parent, ctx context.Context, attempt, workspace string, le
 		}
 	}
 	build, _ := a.prepareBuildContext(ctx, project, lease)
-	payload := map[string]any{"protocol_version": "1.0", "request_id": lease.JobID, "session_id": lease.SessionID, "command": "materialize_attempt", "payload": map[string]any{"project_root": "project", "output_root": "attempt", "selected_function": lease.SelectedFunction, "answer": *lease.Answer}}
+	materialization, err := restorePayload(lease)
+	if err != nil {
+		result := commandResult{ExitCode: 1, Log: err.Error()}
+		return a.complete(parent, lease, postgres.Completion{Outcome: "failed", ConfigureResult: result})
+	}
+	payload := map[string]any{"protocol_version": "1.0", "request_id": lease.JobID, "session_id": lease.SessionID, "command": "materialize_attempt", "payload": materialization}
 	var response struct {
 		Status string `json:"status"`
+		Error  struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	materializeStart := time.Now()
 	workerErr := runWorker(ctx, a.config.Worker, workspace, payload, &response)
 	addTiming(ctx, func(t *postgres.JobTimings) { t.MaterializeMS += elapsedMS(materializeStart) })
 	if workerErr != nil || response.Status != "ok" {
+		if response.Error.Code == "INVALID_ANSWER" {
+			result := commandResult{ExitCode: 1, Log: response.Error.Message}
+			return a.complete(parent, lease, postgres.Completion{Outcome: "failed", ConfigureResult: result})
+		}
 		return a.complete(parent, lease, postgres.Completion{Outcome: "error"})
 	}
 	if err := makeSandboxReadable(attempt); err != nil {

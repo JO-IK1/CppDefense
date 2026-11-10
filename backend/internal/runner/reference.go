@@ -184,6 +184,44 @@ func (a *agent) verifyOriginal(ctx context.Context, project string, lease postgr
 }
 
 func restoreMatches(project string, lease postgres.Lease) bool {
+	if len(lease.RestoreTargets) > 0 {
+		answers, err := restoreAnswers(lease)
+		if err != nil {
+			return false
+		}
+		for _, t := range lease.RestoreTargets {
+			if !lease.SignaturesVisible {
+				if t.FilePath == "" || path.Clean(t.FilePath) != t.FilePath || strings.HasPrefix(t.FilePath, "/") || strings.HasPrefix(t.FilePath, "../") || strings.ContainsAny(t.FilePath, "\\\x00") {
+					return false
+				}
+				source, err := os.ReadFile(filepath.Join(project, filepath.FromSlash(t.FilePath)))
+				if err != nil || t.SignatureBegin < 0 || t.BodyEnd <= t.SignatureBegin || t.BodyEnd > int64(len(source)) {
+					return false
+				}
+				digest := sha256.Sum256(source)
+				if hex.EncodeToString(digest[:]) != t.SourceSHA256 {
+					return false
+				}
+				end := t.BodyEnd
+				if t.EntityType != "function" && end < int64(len(source)) && source[end] == ';' {
+					end++
+				}
+				if !bytes.Equal(normalizedCode(source[t.SignatureBegin:end]), normalizedCode([]byte(answers[t.ID]))) {
+					return false
+				}
+			} else {
+				answer := answers[t.ID]
+				single := lease
+				single.RestoreTargets = nil
+				single.SelectedFunction = &t.SelectedFunction
+				single.Answer = &answer
+				if !restoreMatches(project, single) {
+					return false
+				}
+			}
+		}
+		return true
+	}
 	s := lease.SelectedFunction
 	if s == nil || lease.Answer == nil || s.FilePath == "" || path.Clean(s.FilePath) != s.FilePath || strings.HasPrefix(s.FilePath, "/") || strings.HasPrefix(s.FilePath, "../") || strings.ContainsAny(s.FilePath, "\\\x00") {
 		return false

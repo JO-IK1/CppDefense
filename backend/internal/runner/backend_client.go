@@ -18,6 +18,7 @@ func (a *agent) lease(ctx context.Context) (postgres.Lease, bool, error) {
 		if !a.legacyLease.Load() {
 			payload["wait_ms"] = 10000
 			payload["accept_warmups"] = true
+			payload["accept_restore_v3"] = true
 		}
 		body, _ := json.Marshal(payload)
 		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, a.config.Backend+"/api/v1/runner/jobs/lease", bytes.NewReader(body))
