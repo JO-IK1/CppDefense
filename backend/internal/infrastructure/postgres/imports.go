@@ -415,7 +415,7 @@ func (r *ImportRepository) ListReviewPending(ctx context.Context, actor, groupID
 
 func (r *ImportRepository) OriginalObject(ctx context.Context, actor, importID string) (appstorage.Key, string, error) {
 	var hidden bool
-	if err := r.db.pool.QueryRow(ctx, `select exists(select 1 from users u join submission_versions sv on sv.original_import_id=$2 join defenses d on d.submission_version_id=sv.id where u.id=$1 and u.role='student' and d.defense_mode='hide_seek')`, actor, importID).Scan(&hidden); err != nil {
+	if err := r.db.pool.QueryRow(ctx, `select exists(select 1 from users u join submission_versions sv on sv.original_import_id=$2 join defenses d on d.submission_version_id=sv.id where u.id=$1 and u.role='student' and d.defense_mode='hide_seek' and d.status in('ready','preparing','active'))`, actor, importID).Scan(&hidden); err != nil {
 		return appstorage.Key{}, "", err
 	}
 	if hidden {
@@ -537,6 +537,11 @@ func (r *ImportRepository) CommitApply(ctx context.Context, actor, importID stri
 			if e != nil {
 				return nil, e
 			}
+		}
+		// Only approved, normalized submissions execute in the sandbox. Warmups
+		// use the ordinary leased queue, below interactive defenses in priority.
+		if e = enqueueSubmissionWarmup(ctx, tx, versionID); e != nil {
+			return nil, e
 		}
 		action := "create_version"
 		if duplicate {

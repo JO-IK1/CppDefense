@@ -11,9 +11,9 @@ import (
 // Listen uses a dedicated connection, never an idle pool connection: long polls
 // must not exhaust the normal API pool. LISTEN precedes the first lease query,
 // so a committed insertion cannot be lost between querying and subscribing.
-func (r *DefenseRepository) LeaseWaiting(ctx context.Context, id string, slots int, hash []byte, wait time.Duration) (Lease, error) {
+func (r *DefenseRepository) LeaseWaiting(ctx context.Context, id string, slots int, hash []byte, wait time.Duration, warmups ...bool) (Lease, error) {
 	if wait <= 0 {
-		return r.Lease(ctx, id, slots, hash)
+		return r.Lease(ctx, id, slots, hash, warmups...)
 	}
 	if wait > 20*time.Second {
 		wait = 20 * time.Second
@@ -24,7 +24,7 @@ func (r *DefenseRepository) LeaseWaiting(ctx context.Context, id string, slots i
 	cfg.RuntimeParams["application_name"] = "cppdefense-runner-wait"
 	conn, err := pgx.ConnectConfig(waiting, cfg)
 	if err != nil {
-		return r.Lease(ctx, id, slots, hash)
+		return r.Lease(ctx, id, slots, hash, warmups...)
 	}
 	defer func() {
 		closing, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -32,10 +32,10 @@ func (r *DefenseRepository) LeaseWaiting(ctx context.Context, id string, slots i
 		conn.Close(closing)
 	}()
 	if _, err = conn.Exec(waiting, "listen cppdefense_runner_jobs"); err != nil {
-		return r.Lease(ctx, id, slots, hash)
+		return r.Lease(ctx, id, slots, hash, warmups...)
 	}
 	for {
-		lease, err := r.Lease(ctx, id, slots, hash)
+		lease, err := r.Lease(ctx, id, slots, hash, warmups...)
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return lease, err
 		}

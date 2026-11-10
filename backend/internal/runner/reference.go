@@ -19,8 +19,8 @@ import (
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
 )
 
-// Proofs are private, bounded and process-local. Restarting a runner or moving
-// a job to another runner requires validation again, never optimistic acceptance.
+// The process-local proof map is bounded; persisted snapshots are independently
+// validated. Expired proofs require revalidation, never optimistic acceptance.
 const referenceTTL = time.Hour
 
 func normalizedCode(value []byte) []byte {
@@ -105,7 +105,9 @@ func referenceIdentity(project string, lease postgres.Lease, image, policy strin
 	if err != nil {
 		return "", nil, err
 	}
-	data, _ := json.Marshal([]string{lease.SubmissionObjectKey, lease.SessionID, digest, image, policy})
+	// Container source/build paths are stable. The immutable submission, not a
+	// defense session, owns the baseline; student attempts never publish to it.
+	data, _ := json.Marshal([]string{lease.SubmissionObjectKey, digest, image, policy})
 	key := sha256.Sum256(data)
 	return hex.EncodeToString(key[:]), &postgres.ReferenceResult{ProjectSHA256: digest, ImageID: image, PolicySHA256: policy}, nil
 }

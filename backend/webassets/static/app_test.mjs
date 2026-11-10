@@ -5,6 +5,97 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("./app.js", import.meta.url), "utf8");
 
+function defenseBrowser() {
+  const elements = new Map();
+  const element = () => ({value: "", textContent: "", dataset: {}, style: {}, children: [],
+    addEventListener() {}, replaceChildren(...children) { this.children = children; },
+    classList: {add() {}, remove() {}, toggle() {}}, querySelectorAll() { return []; }});
+  const answer = element();
+  elements.set("#answer", answer);
+  for (const selector of ["#defense-status", "#timer", "#defense-timer-bar", "#save-draft", "#submit-attempt", "#answer-signature", "#answer-closing", "#source-access-hint", "#repository-files", "#source-code code", "#source-title"]) elements.set(selector, element());
+  const context = browserContext(null, answer);
+  context.document.querySelector = selector => elements.get(selector) || null;
+  vm.runInContext(source, context);
+  vm.runInContext(`
+    defenseID = "defense";
+    renderRepositoryTree = (root, items) => { root.items = items; };
+    renderStudentSource = (content, path) => { document.querySelector("#source-code code").textContent = content; };
+  `, context);
+  return {context, elements};
+}
+
+test("student loads selected signature and source on ready-to-active transition", async () => {
+  const {context, elements} = defenseBrowser();
+  context.value = {status: "ready", defense_mode: "restore", draft_version: 1};
+  context.api = async url => {
+    if (url.endsWith("/repository")) return {items: [{path: "main.cpp"}]};
+    if (url.includes("/repository/file")) return {path: "main.cpp", content: "int sum() {/* TODO */}", masked: true};
+    return context.value;
+  };
+  await vm.runInContext("refreshDefense()", context);
+  assert.equal(elements.get("#submit-attempt").disabled, true);
+  context.value = {...context.value, status: "active", deadline_at: new Date(Date.now() + 60000).toISOString(), selected_candidate_id: "candidate", challenge: {signature: "int sum()", function_name: "sum", file_path: "main.cpp", begin_line: 1, end_line: 1}};
+  await vm.runInContext("refreshDefense()", context);
+  assert.equal(elements.get("#answer-signature").textContent, "int sum() {");
+  assert.match(elements.get("#source-code code").textContent, /TODO/);
+  assert.equal(elements.get("#repository-files").items[0].path, "main.cpp");
+  assert.equal(elements.get("#submit-attempt").disabled, false);
+});
+
+test("a failed initial file request is retried and does not freeze task loading", async () => {
+  const {context, elements} = defenseBrowser();
+  let attempts = 0;
+  context.api = async url => {
+    if (url.endsWith("/repository")) return {items: [{path: "main.cpp"}]};
+    if (url.includes("/repository/file")) {
+      if (++attempts === 1) throw new Error("temporary file failure");
+      return {path: "main.cpp", content: "masked", masked: true};
+    }
+    return {status: "active", defense_mode: "restore", deadline_at: new Date(Date.now() + 60000).toISOString(), challenge: {signature: "int sum()", file_path: "main.cpp"}};
+  };
+  await assert.rejects(vm.runInContext("refreshDefense()", context), /temporary/);
+  assert.equal(vm.runInContext("repositoryLoaded", context), false);
+  assert.equal(elements.get("#submit-attempt").disabled, true);
+  assert.match(elements.get("#timer").textContent, /^\d+:\d{2}$/);
+  await vm.runInContext("refreshDefense()", context);
+  assert.equal(attempts, 2);
+  assert.equal(vm.runInContext("repositoryLoaded", context), true);
+  assert.equal(elements.get("#submit-attempt").disabled, false);
+});
+
+test("an active defense without a challenge explains the error and cannot submit blindly", async () => {
+  const {context, elements} = defenseBrowser();
+  context.api = async () => ({status: "active", defense_mode: "restore", preparation_error: "Выберите другую версию"});
+  await vm.runInContext("refreshDefense()", context);
+  assert.equal(elements.get("#submit-attempt").disabled, true);
+  assert.equal(elements.get("#answer").readOnly, true);
+  assert.equal(elements.get("#defense-status").textContent, "Выберите другую версию");
+});
+
+test("viewing a read-only test file in hide mode does not block submission of saved source edits", async () => {
+  const {context, elements} = defenseBrowser();
+  context.api = async url => {
+    if (url.endsWith("/repository")) return {items: [{path: "tests.cpp", editable: false}]};
+    if (url.includes("/repository/file")) return {path: "tests.cpp", content: "read only", editable: false};
+    return {status: "active", defense_mode: "hide_seek", error_count: 1};
+  };
+  await vm.runInContext("refreshDefense()", context);
+  assert.equal(elements.get("#answer").readOnly, true);
+  assert.equal(elements.get("#submit-attempt").disabled, false);
+});
+
+test("wheel animation failure still displays selected function", () => {
+  const wheel = {dataset: {}, style: {}, classList: {add() {}}, animate() { throw new Error("animation unavailable"); }};
+  const context = browserContext(wheel);
+  const label = {};
+  context.getComputedStyle = () => ({transform: "none"});
+  const select = context.document.querySelector;
+  context.document.querySelector = selector => selector === "#wheel-label" ? label : select(selector);
+  vm.runInContext(source + `\nwheelCandidates = [{id: "one", signature: "int sum()", file_path: "main.cpp"}]; settleWheel("one", {signature: "int sum()", function_name: "sum", file_path: "main.cpp"});`, context);
+  assert.equal(label.textContent, "sum");
+  assert.equal(wheel.style.transform, "rotate(0deg)");
+});
+
 test("timings show measured stages and distinguish missing measurements", () => {
   const context = browserContext(null);
   context.document.createElement = tag => ({tag, children: [], append(...children) {this.children.push(...children);}});

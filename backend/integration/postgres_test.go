@@ -87,7 +87,7 @@ func TestMigrationsAreRepeatable(t *testing.T) {
 	if err := db.Pool().QueryRow(context.Background(), "select count(*) from cppdefense_schema_migrations").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 16 {
+	if count != 18 {
 		t.Fatalf("migration count = %d", count)
 	}
 	var legacyTable *string
@@ -397,6 +397,10 @@ func TestTeacherGitHubImportUsesSiteGroupAndPersistsCommit(t *testing.T) {
 	}
 	if source != "teacher_import" || storedCommit != commitSHA {
 		t.Fatalf("unexpected GitHub version metadata: source=%q commit=%q", source, storedCommit)
+	}
+	var warmups int
+	if err = db.Pool().QueryRow(ctx, `select count(*) from runner_jobs j join submission_versions sv on sv.id=j.submission_version_id where j.kind='warm_submission' and j.state='queued' and j.priority<0 and sv.student_record_id=$1 and sv.lab_id=$2`, recordID, labID).Scan(&warmups); err != nil || warmups != 1 {
+		t.Fatalf("approved submission not queued for warmup: %d %v", warmups, err)
 	}
 }
 

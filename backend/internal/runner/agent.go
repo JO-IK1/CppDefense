@@ -108,6 +108,9 @@ func (a *agent) execute(parent context.Context, lease postgres.Lease) error {
 	if err != nil {
 		return err
 	}
+	if lease.Kind == "warm_submission" {
+		return a.warmSubmission(parent, ctx, project, lease)
+	}
 	if lease.DefenseMode == "hide_seek" {
 		if lease.Kind == "prepare_defense" {
 			return a.validateHide(parent, ctx, project, lease)

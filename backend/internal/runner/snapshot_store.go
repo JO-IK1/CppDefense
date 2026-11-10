@@ -18,7 +18,7 @@ import (
 	"github.com/JO-IK1/CppDefense/backend/internal/infrastructure/postgres"
 )
 
-const snapshotSchema = 1
+const snapshotSchema = 2
 
 type buildContext struct {
 	Key, Image, Policy string

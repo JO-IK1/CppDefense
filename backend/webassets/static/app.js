@@ -539,9 +539,11 @@ async function loadRepository(selectedPath) {
   const value = await api(`/api/v1/defenses/${defenseID}/repository`);
   const root = document.querySelector("#repository-files");
   renderRepositoryTree(root, value.items, openRepositoryFile);
-  repositoryLoaded = true;
   if (selectedPath) await openRepositoryFile(selectedPath);
   else if (studentDefenseMode === "hide_seek" && value.items.length) await openRepositoryFile((value.items.find(item => item.editable) || value.items[0]).path);
+  // Mark the whole view ready only after the initial file has loaded too.
+  // Otherwise one transient file error leaves the code pane empty forever.
+  repositoryLoaded = true;
 }
 
 function wheelRotation(element) {
@@ -623,15 +625,20 @@ function settleWheel(selectedID, challenge) {
   const forward = (normalizedFinal - normalizedCurrent + 360) % 360;
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const target = current + (reduced ? 0 : 4 * 360) + forward;
-  wheelSettleAnimation = wheel.animate([{ transform: `rotate(${current}deg)` }, { transform: `rotate(${target}deg)` }], { duration: reduced ? 1 : 2200, easing: "cubic-bezier(.12,.72,.18,1)", fill: "forwards" });
-  wheelSettleAnimation.finished.then(() => {
+  const finish = () => {
     wheel.style.transform = `rotate(${finalRotation}deg)`;
-    wheelSettleAnimation.cancel();
+    wheelSettleAnimation?.cancel();
     positionWheelLabels(finalRotation);
     wheel.classList.add("is-selected");
     label.textContent = challenge.function_name;
     label.title = challenge.signature;
-  }).catch(() => {});
+  };
+  // Animation is decoration, never a prerequisite for displaying the task.
+  try {
+    if (typeof wheel.animate !== "function") { finish(); return; }
+    wheelSettleAnimation = wheel.animate([{ transform: `rotate(${current}deg)` }, { transform: `rotate(${target}deg)` }], { duration: reduced ? 1 : 2200, easing: "cubic-bezier(.12,.72,.18,1)", fill: "forwards" });
+    wheelSettleAnimation.finished.then(finish).catch(() => {});
+  } catch { finish(); }
 }
 
 const defenseStatusLabels = { ready: "Ожидает настройки преподавателя", preparing: "Подготовка задания…", active: "Защита идёт", passed: "Защита успешно сдана", failed: "Защита не пройдена", error: "Ошибка подготовки защиты", expired: "Время защиты истекло", cancelled: "Защита отменена" };
@@ -674,16 +681,22 @@ initializeStudentLabTable();
 document.querySelectorAll("[data-start-defense]").forEach(button => {
   button.onclick = async () => {
     if (!confirm("Перед началом защиты отключите все расширения (плагины) браузера. После отключения вернитесь на сайт. Вы готовы начать защиту?")) return;
+    stopDefensePolling();
+    defenseID = undefined;
     activeChallenge = null;
     studentDefenseMode = "restore";
     hideEdits = {}; hideEditingPath = ""; hideDraftLoaded = false;
     document.querySelector("#answer").value = "";
-    document.querySelector("#answer").readOnly = false;
+    document.querySelector("#answer").readOnly = true;
+    document.querySelector("#save-draft").disabled = true;
+    document.querySelector("#submit-attempt").disabled = true;
     document.querySelector("#answer-signature").textContent = "Сигнатура появится после выбора задания";
     document.querySelector("#defense").classList.remove("hidden");
     document.querySelector("#defense").scrollIntoView({ behavior: "smooth", block: "start" });
-    startWheel();
+    try { startWheel(); } catch (error) { console.warn("Wheel animation unavailable", error); }
     repositoryLoaded = false;
+    document.querySelector("#repository-files").replaceChildren(node("span", "", "Файлы появятся после подготовки задания"));
+    document.querySelector("#source-code code").textContent = "Код появится после подготовки задания…";
     document.querySelector("#result")?.classList.add("hidden");
     const value = await api("/api/v1/defenses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submission_version_id: button.dataset.startDefense }) });
     defenseID = value.id;
@@ -696,16 +709,18 @@ async function refreshDefense() {
   if (!defenseID || defenseRefreshInFlight) return false;
   defenseRefreshInFlight = true;
   try {
-    const value = await api(`/api/v1/defenses/${defenseID}`);
+    const requestedID = defenseID;
+    const value = await api(`/api/v1/defenses/${requestedID}`);
+    if (requestedID !== defenseID) return false;
     const status = document.querySelector("#defense-status");
-    const timer = document.querySelector("#timer");
-    const timerBar = document.querySelector("#defense-timer-bar");
+    renderDefenseTimer(value);
     studentDefenseMode = value.defense_mode || "restore";
     const hide = studentDefenseMode === "hide_seek";
     const answer = document.querySelector("#answer");
-    answer.readOnly = value.status !== "active" || (hide && !hideEditingAllowed);
-    document.querySelector("#save-draft").disabled = value.status !== "active";
-    document.querySelector("#submit-attempt").disabled = value.status !== "active";
+    const taskReady = value.status === "active" && repositoryLoaded && (hide || Boolean(value.challenge));
+    answer.readOnly = !taskReady || (hide && !hideEditingAllowed);
+    document.querySelector("#save-draft").disabled = !taskReady;
+    document.querySelector("#submit-attempt").disabled = !taskReady;
     const editorHint = document.querySelector(".editor-column .pane-title span:last-child");
     if (editorHint) editorHint.textContent = hide ? "файл целиком" : "без внешних скобок";
     document.querySelector(".wheel-column .wheel-stage")?.classList.toggle("hidden", hide);
@@ -732,13 +747,34 @@ async function refreshDefense() {
       activeChallenge = value.challenge;
       document.querySelector("#answer-signature").textContent = value.challenge.signature.trim().replace(/\{\s*$/, "").trimEnd() + " {";
       document.querySelector("#answer-closing").textContent = ["class", "struct"].includes(value.challenge.entity_type) ? "};" : "}";
-      settleWheel(value.selected_candidate_id, value.challenge);
       status.textContent = `${value.challenge.signature} · строки ${value.challenge.begin_line}–${value.challenge.end_line}`;
       if (!repositoryLoaded) {
         document.querySelector("#source-code code").textContent = value.challenge.masked_source || "Замаскированный исходник недоступен";
         await loadRepository(value.challenge.file_path);
       }
+      // Display essential content first, then update the optional wheel.
+      try { settleWheel(value.selected_candidate_id, value.challenge); }
+      catch (error) {
+        console.warn("Wheel animation failed", error);
+        const label = document.querySelector("#wheel-label");
+        if (label) label.textContent = value.challenge.function_name;
+      }
+    } else if (!hide && value.status === "active") {
+      status.textContent = value.preparation_error || "Сервер запустил защиту, но не передал выбранное задание. Повторяем загрузку…";
     }
+    const editable = value.status === "active" && repositoryLoaded && (hide || Boolean(value.challenge));
+    answer.readOnly = !editable || (hide && !hideEditingAllowed);
+    document.querySelector("#save-draft").disabled = !editable;
+    document.querySelector("#submit-attempt").disabled = !editable;
+    return ["passed", "failed", "error", "expired", "cancelled"].includes(value.status);
+  } finally {
+    defenseRefreshInFlight = false;
+  }
+}
+
+function renderDefenseTimer(value) {
+    const timer = document.querySelector("#timer");
+    const timerBar = document.querySelector("#defense-timer-bar");
     if (value.status === "active" && value.deadline_at) {
       const left = Math.max(0, Math.floor((Date.parse(value.deadline_at) - Date.now()) / 1000));
       timer.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
@@ -750,10 +786,6 @@ async function refreshDefense() {
       timerBar?.classList.add("hidden");
       timerBar?.classList.remove("defense-timer-bar--warning", "defense-timer-bar--danger");
     }
-    return ["passed", "failed", "error", "expired", "cancelled"].includes(value.status);
-  } finally {
-    defenseRefreshInFlight = false;
-  }
 }
 
 function stopDefensePolling() {

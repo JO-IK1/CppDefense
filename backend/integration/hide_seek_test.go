@@ -63,6 +63,10 @@ func testHideSeekLifecycleWithWait(t *testing.T, useReference, withWait bool) {
 	exec("insert into imports(id,group_id,kind,uploaded_by,original_object_key,original_sha256,compressed_size,schema_version) values($1,$2,'lab',$3,$4,$5,100,1)", imp, group, student, originalKey.String(), digest[:])
 	exec("insert into submission_versions(id,student_record_id,lab_id,version_no,source,original_import_id,normalized_object_key,normalized_sha256,source_manifest,created_by) values($1,$2,$3,1,'teacher_import',$4,$5,$6,'{}',$7)", submission, record, lab, imp, normalizedKey.String(), digest[:], teacher)
 	exec("insert into defenses(id,session_id,submission_version_id,status,seed,time_limit_seconds) values($1,$2,$3,'ready',42,900)", defense, session, submission)
+	oldRestore, oldCandidate := uuid(), uuid()
+	exec("insert into defenses(id,session_id,submission_version_id,status,seed,time_limit_seconds,finished_at,current_draft) values($1,$2,$3,'passed',1,900,now(),'old answer')", oldRestore, uuid(), submission)
+	exec("insert into defense_candidates(id,defense_id,rank,function_name,file_path,signature,signature_begin_offset,body_start_offset,body_end_offset,start_line,end_line,line_count,source_sha256,original_body_sha256,is_selected,entity_type,is_test_file,masked_source) values($1,$2,1,'old','main.cpp','int old()',0,10,22,1,1,1,$3,$3,true,'function',false,'int old(){ /* TODO */ }')", oldCandidate, oldRestore, make([]byte, 32))
+	exec("update defenses set selected_candidate_id=$2 where id=$1", oldRestore, oldCandidate)
 	if e = tx.Commit(ctx); e != nil {
 		t.Fatal(e)
 	}
@@ -77,6 +81,17 @@ func testHideSeekLifecycleWithWait(t *testing.T, useReference, withWait bool) {
 	}
 	if configured.Status != "preparing" || configured.StartedAt != nil || configured.ErrorCount != 1 {
 		t.Fatalf("premature start: %#v", configured)
+	}
+	// An old restore view cannot bypass an unfinished hide-and-seek task.
+	oldView, err := r.Get(ctx, student, oldRestore)
+	if err != nil || oldView.Challenge != nil || oldView.CurrentDraft != "" || oldView.PreparationError == "" {
+		t.Fatalf("old restore leaks current hide task: %#v %v", oldView, err)
+	}
+	if _, err = r.SourceAccess(ctx, student, oldRestore); err == nil {
+		t.Fatal("old restore source bypassed current hide task")
+	}
+	if teacherView, err := r.Get(ctx, teacher, oldRestore); err != nil || teacherView.Challenge == nil {
+		t.Fatalf("teacher lost restore source: %#v %v", teacherView, err)
 	}
 	hash := sha256.Sum256([]byte(runner))
 	lease := func() postgres.Lease {
@@ -254,5 +269,37 @@ func testHideSeekLifecycleWithWait(t *testing.T, useReference, withWait bool) {
 		if v.Status != expected {
 			t.Fatalf("status=%s after %s", v.Status, outcome)
 		}
+	}
+	// Finished hide-and-seek tasks no longer erase a restore challenge forever.
+	oldView, err = r.Get(ctx, student, oldRestore)
+	if err != nil || oldView.Challenge == nil || oldView.Challenge.Signature != "int old()" || oldView.PreparationError != "" {
+		t.Fatalf("finished hide task still hides restoration: %#v %v", oldView, err)
+	}
+	oldSource, err := r.SourceAccess(ctx, student, oldRestore)
+	if err != nil || !oldSource.MaskSelected || oldSource.SelectedFile != "main.cpp" {
+		t.Fatalf("restore repository still blocked: %#v %v", oldSource, err)
+	}
+	if _, err = storage.ReadableSubmissionKey(ctx, student, submission); err != nil {
+		t.Fatal("finished hide task still blocks own archive", err)
+	}
+	if _, _, err = imports.OriginalObject(ctx, student, imp); err != nil {
+		t.Fatal("finished hide task still blocks own import", err)
+	}
+	nextRestore, nextCandidate := uuid(), uuid()
+	if _, err = db.Pool().Exec(ctx, "insert into defenses(id,session_id,submission_version_id,status,seed,time_limit_seconds,started_at,deadline_at) values($1,$2,$3,'active',3,900,statement_timestamp(),statement_timestamp()+interval '900 seconds')", nextRestore, uuid(), submission); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool().Exec(ctx, "insert into defense_candidates(id,defense_id,rank,function_name,file_path,signature,signature_begin_offset,body_start_offset,body_end_offset,start_line,end_line,line_count,source_sha256,original_body_sha256,is_selected,entity_type,is_test_file,masked_source) values($1,$2,1,'next','main.cpp','int next()',0,10,22,1,1,1,$3,$3,true,'function',false,'int next(){ /* TODO */ }')", nextCandidate, nextRestore, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool().Exec(ctx, "update defenses set selected_candidate_id=$2 where id=$1", nextRestore, nextCandidate); err != nil {
+		t.Fatal(err)
+	}
+	nextView, err := r.Get(ctx, student, nextRestore)
+	if err != nil || nextView.Status != "active" || nextView.Challenge == nil || nextView.Challenge.Signature != "int next()" || nextView.DeadlineAt == nil {
+		t.Fatalf("next restore started without task: %#v %v", nextView, err)
+	}
+	if _, err = r.SourceAccess(ctx, student, nextRestore); err != nil {
+		t.Fatal("next restore project blocked", err)
 	}
 }
