@@ -165,12 +165,12 @@ func (r *DefenseRepository) Get(ctx context.Context, actor, id string) (Defense,
 	}
 	if v.SelectedCandidateID != nil {
 		var challenge Challenge
-		if e = r.db.pool.QueryRow(ctx, `select function_name,entity_type,file_path,signature,start_line,end_line,coalesce(masked_source,'') from defense_candidates where id=$1`, *v.SelectedCandidateID).Scan(&challenge.FunctionName, &challenge.EntityType, &challenge.FilePath, &challenge.Signature, &challenge.BeginLine, &challenge.EndLine, &challenge.MaskedSource); e == nil {
-			// The selected entity is not a usable challenge until the runner has
-			// produced its masked source in the second preparation phase.
-			if challenge.MaskedSource != "" {
-				v.Challenge = &challenge
-			}
+		if e = r.db.pool.QueryRow(ctx, `select function_name,entity_type,file_path,signature,start_line,end_line,coalesce(masked_source,'') from defense_candidates where id=$1 and defense_id=$2`, *v.SelectedCandidateID, id).Scan(&challenge.FunctionName, &challenge.EntityType, &challenge.FilePath, &challenge.Signature, &challenge.BeginLine, &challenge.EndLine, &challenge.MaskedSource); e != nil {
+			return Defense{}, fmt.Errorf("read selected challenge: %w", e)
+		}
+		// Never publish an incomplete task during materialization.
+		if challenge.MaskedSource != "" {
+			v.Challenge = &challenge
 		}
 	}
 	v.PreparationStage = preparationStage(v)
@@ -421,7 +421,7 @@ func (r *DefenseRepository) SourceAccess(ctx context.Context, actor, defenseID s
 	}
 	if access.StudentView && access.DefenseMode != "hide_seek" {
 		var hidden bool
-		if e = r.db.pool.QueryRow(ctx, `select exists(select 1 from defenses d join defenses other on other.submission_version_id=d.submission_version_id where d.id=$1 and other.defense_mode='hide_seek')`, defenseID).Scan(&hidden); e != nil {
+		if e = r.db.pool.QueryRow(ctx, `select exists(select 1 from defenses d join defenses other on other.submission_version_id=d.submission_version_id where d.id=$1 and other.defense_mode='hide_seek' and other.status in('ready','preparing','active'))`, defenseID).Scan(&hidden); e != nil {
 			return DefenseSourceAccess{}, e
 		}
 		if hidden {

@@ -35,13 +35,14 @@ func (r *DefenseRepository) hideView(ctx context.Context, actor string, value *D
 	}
 	if !teacher && value.DefenseMode != "hide_seek" {
 		var hidden bool
-		if err := r.db.pool.QueryRow(ctx, `select exists(select 1 from defenses where submission_version_id=$1 and defense_mode='hide_seek')`, value.SubmissionVersionID).Scan(&hidden); err != nil {
+		if err := r.db.pool.QueryRow(ctx, `select exists(select 1 from defenses where submission_version_id=$1 and defense_mode='hide_seek' and status in('ready','preparing','active'))`, value.SubmissionVersionID).Scan(&hidden); err != nil {
 			return err
 		}
 		if hidden {
 			value.Challenge = nil
 			value.CurrentDraft = ""
 			value.WheelCandidates = []WheelCandidate{}
+			value.PreparationError = "Просмотр исходников временно закрыт: для этой версии работы не завершена защита «Прятки». Обратитесь к преподавателю."
 		}
 	}
 	return nil
